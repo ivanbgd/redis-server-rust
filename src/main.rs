@@ -1,14 +1,15 @@
 //! # Redis Application
 
 use anyhow::Result;
-use codecrafters_redis::conn::handle_connection;
 use codecrafters_redis::constants::{ExitCode, LOCAL_SOCKET_ADDR_STR};
+use codecrafters_redis::errors::ApplicationError;
+use codecrafters_redis::requests::handle_request;
 use log::{error, info, warn};
 use std::process::exit;
 use tokio::net::TcpListener;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), ApplicationError> {
     env_logger::init();
     info!("Starting the server...");
 
@@ -18,7 +19,7 @@ async fn main() -> Result<()> {
 }
 
 /// Resolve DNS queries
-async fn main_loop(listener: TcpListener) -> Result<()> {
+async fn main_loop(listener: TcpListener) -> Result<(), ApplicationError> {
     info!("Waiting for requests...");
 
     loop {
@@ -28,12 +29,12 @@ async fn main_loop(listener: TcpListener) -> Result<()> {
         // moved to the new task and processed there.
         tokio::spawn(async move {
             // Process each socket (stream) concurrently.
-            handle_connection(stream)
+            handle_request(stream)
                 .await
                 .map_err(|e| {
                     warn!("error: {}", e);
                 })
-                .expect("Failed to handle connection");
+                .expect("Failed to handle request");
 
             shutdown().await;
         });
