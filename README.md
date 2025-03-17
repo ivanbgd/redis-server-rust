@@ -39,8 +39,7 @@ Note: This section is for stages 2 and beyond.
 - Logging was added.
 - Some commands were fully implemented, per official Redis specification,
   and not just partially as per the challenge requirements.
-- Commands were made case-insensitive, while retaining case of their arguments.
-  Redis command names are indeed case-insensitive, but this wasn't specified as a requirement in the challenge.
+- Redis command names are case-insensitive, and we made them that way, while retaining case of their arguments.
 - Handles multiple successive requests from the same connection.
 - Supports multiple concurrent clients.
     - In addition to handling multiple commands from the same client,
@@ -63,10 +62,18 @@ $ ./your_program.sh
 - We can test it in another Terminal tab using, for example, `netcat`, like this:
 
 ```shell
-$ echo -ne '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
+$ echo -ne "*1\r\n$4\r\nPING\r\n" | nc localhost 6379
 +PONG
 
-$ echo -ne '*1\r\n$13\r\nPing Test a B\r\n' | nc localhost 6379 
+$ echo -ne "*1\r\n$13\r\nPing Test a B\r\n" | nc localhost 6379 
 $8
 Test a B
+
+$ echo -ne "*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n" | nc localhost 6379
++PONG
++PONG
+
+$ echo -ne "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n" | nc localhost 6379
+$3
+Hey
 ```

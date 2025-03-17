@@ -11,15 +11,15 @@ pub enum ApplicationError {
     IoError(#[from] std::io::Error),
 
     #[error(transparent)]
-    RequestError(#[from] RequestError),
+    ConnectionError(#[from] ConnectionError),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
-/// Errors related to working with [`crate::requests`]
+/// Errors related to working with [`crate::conn`]
 #[derive(Debug, Error)]
-pub enum RequestError {
+pub enum ConnectionError {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 

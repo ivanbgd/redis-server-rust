@@ -1,9 +1,9 @@
 //! # Redis Application
 
 use anyhow::Result;
+use codecrafters_redis::conn::handle_connection;
 use codecrafters_redis::constants::{ExitCode, LOCAL_SOCKET_ADDR_STR};
 use codecrafters_redis::errors::ApplicationError;
-use codecrafters_redis::requests::handle_request;
 use log::{error, info, warn};
 use std::process::exit;
 use tokio::net::TcpListener;
@@ -31,7 +31,7 @@ async fn main_loop(listener: TcpListener) -> Result<(), ApplicationError> {
         // moved to the new task and processed there.
         tokio::spawn(async move {
             // Process each socket (stream) concurrently.
-            handle_request(stream)
+            handle_connection(stream)
                 .await
                 .map_err(|e| {
                     warn!("error: {}", e);
