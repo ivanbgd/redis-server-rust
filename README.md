@@ -33,6 +33,15 @@ Note: This section is for stages 2 and beyond.
 3. Commit your changes and run `git push origin master` to submit your solution
    to CodeCrafters. Test output will be streamed to your terminal.
 
+# Notes
+
+- Many features that were not required in the challenge were added.
+- Logging was added.
+- Some commands were fully implemented, per official Redis specification,
+  and not just partially as per the challenge requirements.
+- Commands were made case-insensitive, while retaining case of their arguments.
+  Redis command names are indeed case-insensitive, but this wasn't specified in the challenge.
+
 # Running the Program
 
 - If you would like to enable the added logging functionality, first set the `RUST_LOG` environment variable.
@@ -46,3 +55,14 @@ $ ./your_program.sh
 ```
 
 - Our Redis server will listen at the address `127.0.0.1:6379`.
+
+- We can test it in another Terminal tab using, for example, `netcat`, like this:
+
+```shell
+$ echo -ne '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
++PONG
+
+$ echo -ne '*1\r\n$4\r\nPing Test a B\r\n' | nc localhost 6379 
+$8
+Test a B
+```

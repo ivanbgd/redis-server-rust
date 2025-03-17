@@ -1,6 +1,8 @@
 //! # Command Handlers
 //!
 //! [Commands](https://redis.io/docs/latest/commands/)
+//!
+//! [COMMAND](https://redis.io/docs/latest/commands/command/): Redis command names are case-insensitive.
 
 use crate::errors::RequestError;
 use anyhow::Result;
@@ -18,7 +20,7 @@ pub(crate) async fn handle_ping(
     i: usize,
 ) -> Result<(), RequestError> {
     let aux_res;
-    let result = if buf[i..].starts_with(b"PING\r\n") {
+    let result = if buf[i..][..b"PING\r\n".len()].eq_ignore_ascii_case(b"PING\r\n") {
         b"+PONG\r\n"
     } else {
         let rest = buf[i + b"PING".len()..].trim_ascii_start();
