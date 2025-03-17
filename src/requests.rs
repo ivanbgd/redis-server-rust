@@ -17,11 +17,13 @@ pub async fn handle_request(mut stream: TcpStream) -> Result<(), RequestError> {
     let mut buf = [0u8; BUFFER_LEN];
     let _read = stream.read(&mut buf).await?;
 
-    if let Some(i) = buf
+    let mut cursor = 0usize;
+    while let Some(i) = buf[cursor..]
         .windows(b"PING".len())
         .position(|window| window.eq_ignore_ascii_case(b"PING"))
     {
-        handle_ping(&mut stream, &buf, i).await?;
+        let len = handle_ping(&mut stream, &buf[cursor..], i).await?;
+        cursor += i + len;
     }
 
     trace!("Stop handling request from {}", stream.peer_addr()?);

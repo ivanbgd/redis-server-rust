@@ -62,7 +62,7 @@ $ ./your_program.sh
 $ echo -ne '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
 +PONG
 
-$ echo -ne '*1\r\n$4\r\nPing Test a B\r\n' | nc localhost 6379 
+$ echo -ne '*1\r\n$13\r\nPing Test a B\r\n' | nc localhost 6379 
 $8
 Test a B
 ```
