@@ -18,7 +18,9 @@ async fn main() -> Result<(), ApplicationError> {
     main_loop(listener).await
 }
 
-/// Resolve DNS queries
+/// Resolve Redis queries
+///
+/// Supports multiple concurrent clients in addition to multiple requests from the same connection.
 async fn main_loop(listener: TcpListener) -> Result<(), ApplicationError> {
     info!("Waiting for requests...");
 

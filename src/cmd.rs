@@ -11,6 +11,8 @@ use tokio::net::TcpStream;
 
 /// Handler for the `PING` command
 ///
+/// Handles a single `PING` request.
+///
 /// Writes to the provided TCP stream.
 ///
 /// Writes `PONG` as a simple string if no argument is provided, otherwise writes a copy of the argument as a bulk.

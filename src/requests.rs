@@ -10,10 +10,10 @@ use log::trace;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
-/// Handles a request.
+/// Handles multiple successive requests from the same connection.
 pub async fn handle_request(mut stream: TcpStream) -> Result<(), RequestError> {
-    trace!("Start handling request from {}", stream.peer_addr()?);
-    eprintln!("Start handling request from {}", stream.peer_addr()?);
+    trace!("Start handling request(s) from {}", stream.peer_addr()?);
+    eprintln!("Start handling request(s) from {}", stream.peer_addr()?);
 
     loop {
         let mut buf = [0u8; BUFFER_LEN];
@@ -29,8 +29,8 @@ pub async fn handle_request(mut stream: TcpStream) -> Result<(), RequestError> {
         }
     }
 
-    trace!("Stop handling request from {}", stream.peer_addr()?);
-    eprintln!("Stop handling request from {}", stream.peer_addr()?);
+    trace!("Stop handling request(s) from {}", stream.peer_addr()?);
+    eprintln!("Stop handling request(s) from {}", stream.peer_addr()?);
 
     Ok(())
 }

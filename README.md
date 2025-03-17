@@ -35,12 +35,16 @@ Note: This section is for stages 2 and beyond.
 
 # Notes
 
-- Many features that were not required in the challenge were added.
+- Some features that were not required in the challenge were added.
 - Logging was added.
 - Some commands were fully implemented, per official Redis specification,
   and not just partially as per the challenge requirements.
 - Commands were made case-insensitive, while retaining case of their arguments.
-  Redis command names are indeed case-insensitive, but this wasn't specified in the challenge.
+  Redis command names are indeed case-insensitive, but this wasn't specified as a requirement in the challenge.
+- Handles multiple successive requests from the same connection.
+- Supports multiple concurrent clients.
+    - In addition to handling multiple commands from the same client,
+      Redis servers are also designed to handle multiple clients at once.
 
 # Running the Program
 
