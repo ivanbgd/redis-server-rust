@@ -32,3 +32,17 @@ Note: This section is for stages 2 and beyond.
    the first time you run it. Subsequent runs will be fast.
 3. Commit your changes and run `git push origin master` to submit your solution
    to CodeCrafters. Test output will be streamed to your terminal.
+
+# Running the Program
+
+- If you would like to enable the added logging functionality, first set the `RUST_LOG` environment variable.
+    - `export RUST_LOG=[trace | debug | info | warn]`
+
+
+- Run the following to start our Redis server:
+
+```shell
+$ ./your_program.sh
+```
+
+- Our Redis server will listen at the address `127.0.0.1:6379`.
