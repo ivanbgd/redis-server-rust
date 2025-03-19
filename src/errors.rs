@@ -23,8 +23,8 @@ pub enum ConnectionError {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("missing CRLF at the end of simple string")]
-    MissingCRLF,
+    #[error("missing CRLF at the end of command")]
+    CommandMissingCRLF,
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

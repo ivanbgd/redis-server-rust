@@ -27,10 +27,10 @@ async fn main_loop(listener: TcpListener) -> Result<(), ApplicationError> {
     loop {
         let (stream, _) = listener.accept().await?;
 
-        // A new task is spawned for each inbound socket. The socket is
-        // moved to the new task and processed there.
+        // A new task is spawned for each inbound socket. The socket is moved to the new task and processed there.
         tokio::spawn(async move {
             // Process each socket (stream) concurrently.
+            // Each connection can process multiple successive requests (commands) from the same client.
             handle_connection(stream)
                 .await
                 .map_err(|e| {

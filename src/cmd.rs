@@ -1,4 +1,4 @@
-//! # Command Handlers
+//! # Command (Request) Handlers
 //!
 //! [Commands](https://redis.io/docs/latest/commands/)
 //!
@@ -35,7 +35,7 @@ pub(crate) async fn handle_ping(
     buf: &[u8],
     i: usize,
 ) -> Result<(), ConnectionError> {
-    assert!(buf[i..].starts_with(b"PING"));
+    assert!(buf[i..].to_ascii_uppercase().starts_with(b"PING"));
 
     let aux_res;
     let result = if buf[i..][..b"PING\r\n".len()].eq_ignore_ascii_case(b"PING\r\n") {
@@ -45,7 +45,7 @@ pub(crate) async fn handle_ping(
         let ind = rest
             .windows(b"\r\n".len())
             .position(|w| w == b"\r\n")
-            .ok_or_else(|| ConnectionError::MissingCRLF)?;
+            .ok_or_else(|| ConnectionError::CommandMissingCRLF)?;
         let argument = String::from_utf8_lossy(&rest[..ind]);
         aux_res = format!("${}\r\n{argument}\r\n", argument.len());
         aux_res.as_bytes()
@@ -77,13 +77,13 @@ pub(crate) async fn handle_echo(
     buf: &[u8],
     i: usize,
 ) -> Result<(), ConnectionError> {
-    assert!(buf[i..].starts_with(b"ECHO"));
+    assert!(buf[i..].to_ascii_uppercase().starts_with(b"ECHO"));
 
     let rest = buf[i + b"ECHO".len()..].trim_ascii_start();
     let ind = rest
         .windows(b"\r\n".len())
         .rposition(|w| w == b"\r\n")
-        .ok_or_else(|| ConnectionError::MissingCRLF)?;
+        .ok_or_else(|| ConnectionError::CommandMissingCRLF)?;
     let argument = String::from_utf8_lossy(&rest[..ind]);
     let aux_res = format!("{argument}\r\n");
     let result = aux_res.as_bytes();
