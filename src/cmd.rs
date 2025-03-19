@@ -92,3 +92,30 @@ pub(crate) async fn handle_echo(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::LOCAL_SOCKET_ADDR_STR_TEST;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    async fn ping_pong() {
+        let listener = TcpListener::bind(LOCAL_SOCKET_ADDR_STR_TEST).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let wrbuf = b"*1\r\n$4\r\nPING\r\n";
+        let i = 8;
+        let mut writer = TcpStream::connect(addr).await.unwrap();
+        handle_ping(&mut writer, wrbuf, i).await.unwrap();
+
+        const EXPECTED: &[u8; 7] = b"+PONG\r\n";
+        let (mut reader, _addr) = listener.accept().await.unwrap();
+        let mut rdbuf = [0u8; EXPECTED.len()];
+        let n = reader.read(&mut rdbuf).await.unwrap();
+
+        assert_eq!(EXPECTED.len(), n);
+        assert_eq!(EXPECTED, &rdbuf);
+    }
+}
