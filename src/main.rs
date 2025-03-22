@@ -1,4 +1,4 @@
-//! # Redis Application
+//! # An Implementation of a Redis Server
 
 use anyhow::Result;
 use codecrafters_redis::conn::handle_connection;

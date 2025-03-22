@@ -1,121 +1,285 @@
-//! # Command (Request) Handlers
+//! # Request and Command Handlers
 //!
 //! [Commands](https://redis.io/docs/latest/commands/)
 //!
-//! [COMMAND](https://redis.io/docs/latest/commands/command/): Redis command names are case-insensitive.
+//! [COMMAND](https://redis.io/docs/latest/commands/command/)
+//! - Redis command names are case-insensitive.
+//!
+//! [Command key specifications](https://redis.io/docs/latest/develop/reference/key-specs/)
 //!
 //! [Redis serialization protocol specification](https://redis.io/docs/latest/develop/reference/protocol-spec/)
+//! - A client sends a request to the Redis server as an array of strings. The array's contents are the command and
+//!   its arguments that the server should execute. The server's reply type is command-specific.
+//!
+//! [Request-Response model](https://redis.io/docs/latest/develop/reference/protocol-spec/#request-response-model)
+//! - The Redis server accepts commands composed of different arguments.
+//!   Then, the server processes the command and sends the reply back to the client.
+//!   This is the simplest model possible; however, there are some exceptions:
+//!   - Redis requests can be pipelined.
+//!     Pipelining enables clients to send multiple commands at once and wait for replies later.
+//!
+//! [RESP protocol description](https://redis.io/docs/latest/develop/reference/protocol-spec/#resp-protocol-description)
+//! - RESP is essentially a serialization protocol that supports several data types.
+//!   In RESP, the first byte of data determines its type.
+//! - Redis generally uses RESP as a request-response protocol in the following way:
+//!   - Clients send commands to a Redis server as an array of bulk strings.
+//!     The first (and sometimes also the second) bulk string in the array is the command's name.
+//!     Subsequent elements of the array are the arguments for the command.
+//!   - The server replies with a RESP type.
+//!     The reply's type is determined by the command's implementation and possibly by the client's protocol version.
 //!
 //! [Sending commands to a Redis server](https://redis.io/docs/latest/develop/reference/protocol-spec/#sending-commands-to-a-redis-server)
+//! - We can further specify how the interaction between the client and the server works:
+//!   - A client sends the Redis server an array consisting of only bulk strings.
+//!   - A Redis server replies to clients, sending any valid RESP data type as a reply.
+//!
+//! [Multiple commands and pipelining](https://redis.io/docs/latest/develop/reference/protocol-spec/#multiple-commands-and-pipelining)
+//! - A client can use the same connection to issue multiple commands.
+//!   Pipelining is supported, so multiple commands can be sent with a single write operation by the client.
+//!   The client can skip reading replies and continue to send the commands one after the other.
+//!   All the replies can be read at the end.
+//!   For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 
-use crate::errors::ConnectionError;
+use crate::errors::CmdError;
+use crate::resp::{Message, Value};
 use anyhow::Result;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use bytes::{BufMut, Bytes, BytesMut};
 
-/// Handler for the `PING` command
+/// Compares against an enum variant without taking the value into account
+macro_rules! is_enum_variant {
+    ($val:ident, $var:path) => {
+        match $val {
+            $var(..) => true,
+            _ => false,
+        }
+    };
+}
+
+/// Routes request bytes to the appropriate command handler(s) and returns the response bytes.
+///
+/// The received byte stream is necessarily a RESP request, and consequently the RESP Array type.
+///
+/// Since a single request is always an array, it can contain multiple commands. This is called
+/// [pipelining](https://redis.io/docs/latest/develop/reference/protocol-spec/#multiple-commands-and-pipelining).
+/// Pipelining enables clients to send multiple commands at once and wait for replies later.
+///
+/// In case of pipelining, the returned bytes contain multiple responses.
+pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> {
+    let (bytes_arr_len, _) = Message::parse_len(bytes)?;
+    let num_arr_elts = match bytes_arr_len {
+        None => return Err(CmdError::NullArray),
+        Some(n) => n,
+    };
+
+    // A client sends a request to the Redis server as an array of strings.
+    // The array's contents are the command and its arguments that the server should execute.
+    let (msg, bytes_read) = Message::deserialize(bytes)?;
+    let request_arr = match &msg.data {
+        Value::Array(array) => array,
+        _ => return Err(CmdError::CmdNotArray),
+    };
+    if request_arr.is_empty() {
+        return Err(CmdError::EmptyArray);
+    }
+
+    // But, commands can be pipelined, meaning that a single request can contain multiple commands.
+    // num_flattened >= bytes_arr_len
+    let num_flattened = request_arr.len();
+
+    // Check in advance whether all array elements are bulk strings, because they all need to be.
+    // Return early if at least one command is not a bulk string.
+    if !request_arr
+        .iter()
+        .all(|cmd| is_enum_variant!(cmd, Value::BulkString))
+    {
+        return Err(CmdError::NotAllBulk);
+    }
+
+    // Clients send commands to a Redis server as an array of bulk strings.
+    // The first (and sometimes also the second) bulk string in the array is the command's name.
+    // Subsequent elements of the array are the arguments for the command.
+    // For example: b"*2\r\n\$4\r\nECHO\r\n\$9\r\nraspberry\r\n" => b"$9\r\nraspberry\r\n"
+
+    let mut result = BytesMut::new();
+
+    let mut i = 0usize;
+    while i < num_flattened {
+        let first_word = &request_arr[i];
+        let first = if let Value::BulkString(bytes) = first_word {
+            bytes
+        } else {
+            panic!("Expected bulk string")
+        };
+        match first.to_ascii_uppercase().as_slice() {
+            b"PING" => {
+                if num_arr_elts == 1 {
+                    result.put(handle_ping(&request_arr[i..i + 1]).await?)
+                } else if num_arr_elts >= 2 {
+                    result.put(handle_ping(&request_arr[i..i + 2]).await?)
+                }
+            }
+            b"ECHO" => {
+                if num_arr_elts >= 2 {
+                    result.put(handle_echo(&request_arr[i..i + 2]).await?)
+                }
+            }
+            _ => {} // cmd => return Err(CmdError::UnrecognizedCmd(cmd.to_string())), // todo rem
+        }
+        i += 1;
+    }
+
+    Ok(result)
+}
+
+/// Handler for the [PING](https://redis.io/docs/latest/commands/ping/) command
 ///
 /// Handles a single `PING` request.
 ///
-/// Writes to the provided TCP stream.
+/// Returns `PONG` as a [simple string](https://redis.io/docs/latest/develop/reference/protocol-spec/#simple-strings)
+/// if no argument is provided, otherwise returns a copy of the argument as a
+/// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
 ///
-/// Writes `PONG` as a simple string if no argument is provided,
-/// otherwise writes a copy of the argument as a bulk string.
-///
-/// [PING](https://redis.io/docs/latest/commands/ping/)
-///
-/// [Simple strings](https://redis.io/docs/latest/develop/reference/protocol-spec/#simple-strings)
-///
-/// Example request from a client: `"*1\r\n$4\r\nPING\r\n"`.
-/// That's `["PING"]` encoded using the Redis protocol.
-///
-/// Expected response from the server: `+PONG\r\n` (a simple string)
-pub(crate) async fn handle_ping(
-    stream: &mut TcpStream,
-    buf: &[u8],
-    i: usize,
-) -> Result<(), ConnectionError> {
-    assert!(buf[i..].to_ascii_uppercase().starts_with(b"PING"));
-
-    let aux_res;
-    let result = if buf[i..][..b"PING\r\n".len()].eq_ignore_ascii_case(b"PING\r\n") {
-        b"+PONG\r\n"
+/// - Example request from a client: `"*1\r\n$4\r\nPING\r\n"`
+///   That's `["PING"]` encoded using the Redis protocol.
+///    - Expected response from the server: `+PONG\r\n` (a simple string)
+/// - Example request from a client: `"*2\r\n$4\r\PING\r\n$8\r\nTest a B\r\n"`
+///   That's `["PING", "Test a B"]` encoded using the Redis protocol.
+///    - Expected response from the server: `$8\r\nTest a B\r\n` (a bulk string)
+async fn handle_ping(words: &[Value]) -> Result<Bytes, CmdError> {
+    if words.len() == 1 {
+        Ok(Bytes::from("+PONG\r\n"))
+    } else if words.len() == 2 {
+        let argument = if let Value::BulkString(arg) = &words[1] {
+            arg
+        } else {
+            panic!("Expected PING argument and as bulk string");
+        };
+        let argument = String::from_utf8(argument.to_vec())?;
+        let response = format!("${}\r\n{argument}\r\n", argument.len());
+        Ok(Bytes::from(response))
     } else {
-        let rest = buf[i + b"PING".len()..].trim_ascii_start();
-        let ind = rest
-            .windows(b"\r\n".len())
-            .position(|w| w == b"\r\n")
-            .ok_or_else(|| ConnectionError::CommandMissingCRLF)?;
-        let argument = String::from_utf8_lossy(&rest[..ind]);
-        aux_res = format!("${}\r\n{argument}\r\n", argument.len());
-        aux_res.as_bytes()
-    };
-    stream.write_all(result).await?;
-    stream.flush().await?;
-
-    Ok(())
+        panic!("PING can't consist of more than two words");
+    }
 }
 
-/// Handler for the `ECHO` command
+/// Handler for the [ECHO](https://redis.io/docs/latest/commands/echo/) command
 ///
 /// Handles a single `ECHO` request.
 ///
-/// Writes to the provided TCP stream.
+/// Returns a copy of the argument as a
+/// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
 ///
-/// Writes the message back to the stream as a bulk string.
-///
-/// [ECHO](https://redis.io/docs/latest/commands/echo/)
-///
-/// [Bulk strings](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings)
-///
-/// Example request from a client: `"*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n"`.
-/// That's `["ECHO", "Hey"]` encoded using the Redis protocol.
-///
-/// Expected response from the server: `$3\r\nHey\r\n` (a bulk string)
-pub(crate) async fn handle_echo(
-    stream: &mut TcpStream,
-    buf: &[u8],
-    i: usize,
-) -> Result<(), ConnectionError> {
-    assert!(buf[i..].to_ascii_uppercase().starts_with(b"ECHO"));
+/// - Example request from a client: `"*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n"`.
+///   That's `["ECHO", "Hey"]` encoded using the Redis protocol.
+///   - Expected response from the server: `$3\r\nHey\r\n` (a bulk string)
+async fn handle_echo(words: &[Value]) -> Result<Bytes, CmdError> {
+    if words.len() == 2 {
+        let argument = if let Value::BulkString(arg) = &words[1] {
+            arg
+        } else {
+            panic!("Expected ECHO argument and as bulk string");
+        };
+        let argument = String::from_utf8(argument.to_vec())?;
+        let response = format!("${}\r\n{argument}\r\n", argument.len());
+        Ok(Bytes::from(response))
+    } else {
+        panic!("ECHO should consist of exactly two words");
+    }
+}
 
-    let rest = buf[i + b"ECHO".len()..].trim_ascii_start();
-    let ind = rest
-        .windows(b"\r\n".len())
-        .rposition(|w| w == b"\r\n")
-        .ok_or_else(|| ConnectionError::CommandMissingCRLF)?;
-    let argument = String::from_utf8_lossy(&rest[..ind]);
-    let aux_res = format!("{argument}\r\n");
-    let result = aux_res.as_bytes();
-    stream.write_all(result).await?;
-    stream.flush().await?;
-
-    Ok(())
+/// Handler for the [SET](https://redis.io/docs/latest/commands/set/) command
+///
+/// Handles a single `SET` request.
+///
+/// Set key to hold the string value. If key already holds a value, it is overwritten, regardless of its type.
+/// Any previous time to live associated with the key is discarded on successful SET operation.
+pub(crate) async fn handle_set() {
+    todo!()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::LOCAL_SOCKET_ADDR_STR_TEST;
-    use tokio::io::AsyncReadExt;
-    use tokio::net::{TcpListener, TcpStream};
+    use bytes::Bytes;
 
     #[tokio::test]
-    async fn ping_pong() {
-        let listener = TcpListener::bind(LOCAL_SOCKET_ADDR_STR_TEST).await.unwrap();
-        let addr = listener.local_addr().unwrap();
+    async fn handle_ping_ping_pong() {
+        let input = "$4\r\nPING\r\n";
+        let input = Value::BulkString(Bytes::from(input));
+        let input = vec![input];
+        let result = handle_ping(&input).await.unwrap();
 
-        let wrbuf = b"*1\r\n$4\r\nPING\r\n";
-        let i = 8;
-        let mut writer = TcpStream::connect(addr).await.unwrap();
-        handle_ping(&mut writer, wrbuf, i).await.unwrap();
+        let expected = Bytes::from("+PONG\r\n");
 
-        const EXPECTED: &[u8; 7] = b"+PONG\r\n";
-        let (mut reader, _addr) = listener.accept().await.unwrap();
-        let mut rdbuf = [0u8; EXPECTED.len()];
-        let n = reader.read(&mut rdbuf).await.unwrap();
+        assert_eq!(expected, result);
+    }
 
-        assert_eq!(EXPECTED.len(), n);
-        assert_eq!(EXPECTED, &rdbuf);
+    #[tokio::test]
+    async fn handle_ping_ping_with_arg() {
+        let cmd = Value::BulkString(Bytes::from("PING"));
+        let arg = Value::BulkString(Bytes::from("Hello, world!"));
+        let words = vec![cmd, arg];
+        let result = handle_ping(&words).await.unwrap();
+
+        let expected = Bytes::from("$13\r\nHello, world!\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_pong_missing_crlf_at_end() {
+        let input = "*1\r\n$4\r\nPING";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await;
+
+        if let Err(CmdError::RESPError(..)) = result {
+        } else {
+            assert_eq!(0, 1)
+        };
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_pong_pass() {
+        let input = "*1\r\n$4\r\nPING\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("+PONG\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_pong_fail_missing_array_len() {
+        let input = "$4\r\nPING\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await;
+
+        if let Err(CmdError::CmdNotArray) = result {
+        } else {
+            assert_eq!(0, 1)
+        };
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_with_arg() {
+        let input = "*2\r\n$4\r\nPING\r\n$13\r\nHello, world!\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("$13\r\nHello, world!\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_echo() {
+        let input = "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("$3\r\nHey\r\n");
+
+        assert_eq!(expected, result);
     }
 }

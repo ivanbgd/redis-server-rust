@@ -65,13 +65,17 @@ $ ./your_program.sh
 $ echo -ne "*1\r\n$4\r\nPING\r\n" | nc localhost 6379
 +PONG
 
-$ echo -ne "*1\r\n$13\r\nPing Test a B\r\n" | nc localhost 6379 
-$8
-Test a B
-
 $ echo -ne "*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n" | nc localhost 6379
 +PONG
 +PONG
+
+$ echo -ne "*2\r\n$4\r\nPING\r\n$4\r\nPING\r\n" | nc localhost 6379
++PONG
++PONG
+
+$ echo -ne "*2\r\n$4\r\nPING\r\n$13\r\nHello, world!\r\n" | nc localhost 6379 
+$13
+Hello, world!
 
 $ echo -ne "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n" | nc localhost 6379
 $3

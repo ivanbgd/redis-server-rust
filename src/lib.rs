@@ -1,4 +1,4 @@
-//! # Redis Library
+//! # Redis Server Library
 
 pub mod cmd;
 pub mod conn;
