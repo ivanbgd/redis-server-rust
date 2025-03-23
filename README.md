@@ -55,6 +55,7 @@ Note: This section is for stages 2 and beyond.
 
 ```shell
 $ ./your_program.sh
+$ export RUST_LOG=trace && ./your_program.sh
 ```
 
 - Our Redis server will listen at the address `127.0.0.1:6379`.

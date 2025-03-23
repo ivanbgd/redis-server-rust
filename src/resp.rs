@@ -66,17 +66,10 @@ pub(crate) struct Message {
 impl Message {
     /// Deserializes (parses) a received byte stream into a [`Message`].
     ///
-    /// The byte stream buffer should not contain excess bytes, i.e., it is expected to end with the appropriate CRLF.
+    /// The byte stream buffer should not contain excess bytes, i.e., it is expected to end with the appropriate `CRLF`.
     ///
     /// This is an associated function that can be used to create a new instance of a [`Message`].
-    ///
-    /// The received byte stream is necessarily a RESP command, and consequently the RESP Array type. // todo remove
     pub(crate) fn deserialize(bytes: &Bytes) -> Result<(Message, usize), RESPError> {
-        let len = bytes.len();
-        if bytes[len - 2].ne(&b'\r') || bytes[len - 1].ne(&b'\n') {
-            return Err(RESPError::CRLFNotAtEnd);
-        }
-
         let resp_type = bytes[0].try_into()?;
         let (value, length) = match resp_type {
             RESPType::SimpleString => Self::deserialize_simple_string(bytes)?,
@@ -84,7 +77,8 @@ impl Message {
             RESPType::Integer => Self::deserialize_integer(bytes)?,
             RESPType::Array => Self::deserialize_array(bytes)?,
             RESPType::Error => Self::deserialize_error(bytes)?,
-            // t => return Err(RESPError::UnsupportedRESPType(u8::from(t))),
+            #[allow(unreachable_patterns)]
+            t => return Err(RESPError::UnsupportedRESPType(u8::from(t))),
         };
 
         Ok((
@@ -100,51 +94,69 @@ impl Message {
     ///
     /// Returns a tuple of the parsed length and the number of bytes read to extract the length.
     ///
+    /// The length is either None or some non-negative integer.
+    ///
     /// The number of bytes include the RESP type and the two bytes for `CRLF`.
     ///
     /// In case `-1` is received as length, returns None as length, and 5 as bytes read:
     /// one byte for type plus four bytes for: `b"-1\r\n"`:
     /// - `b"*-1\r\n"` => `(None, 5)`
     ///
-    /// A successful example:
-    /// - `b"$123456\r\n"` => `(Some(123456), 9)`
+    /// Length of `-1` carries a special meaning in RESP, to represent null bulk strings or arrays.
     ///
-    /// Returns an error in case `LF` is missing after `CR`, but `CR` is assumed.
+    /// Some successful examples:
+    /// - `b"*0\r\n"` => `(Some(0), 4)`
+    /// - `b"$123456\r\n"` => `(Some(123456), 9)`
     ///
     /// Reading the length of aggregate types (for example, bulk strings or arrays) can be processed with code that
     /// performs a single operation per character while at the same time scanning for the CR character.
     ///
     /// https://redis.io/docs/latest/develop/reference/protocol-spec/#high-performance-parser-for-the-redis-protocol
+    ///
+    /// # Errors
+    /// - Returns an error in case `LF` is missing after `CR`, but `CR` is assumed to be present, as it's required
+    ///   by the algorithm which is designed to be fast, so it doesn't check for it beforehand.
+    /// - Length can't be negative.
+    /// - Characters composing length must be decimal digits `0` through `9`.
     pub(crate) fn parse_len(bytes: &Bytes) -> Result<(Option<usize>, usize), RESPError> {
         let mut ptr: *const u8 = bytes.as_ptr();
         let mut bytes_read: usize = 0;
         let mut len: usize = 0;
 
-        // Skip the first byte which denotes a RESP type.
-        ptr = ptr.wrapping_add(1);
-        bytes_read += 1;
         unsafe {
-            if (*ptr).eq(&b'-')
-                && (*ptr.wrapping_add(1)).eq(&b'1')
-                && (*ptr.wrapping_add(2)).eq(&b'\r')
-                && (*ptr.wrapping_add(3)).eq(&b'\n')
-            {
-                bytes_read += 4;
-                return Ok((None, bytes_read));
+            // Skip the first byte which denotes a RESP type.
+            ptr = ptr.add(1);
+            bytes_read += 1;
+
+            if (*ptr).eq(&b'-') {
+                if (*ptr.add(1)).eq(&b'1') {
+                    if (*ptr.add(2)).eq(&b'\r') {
+                        if (*ptr.add(3)).eq(&b'\n') {
+                            bytes_read += 4;
+                            return Ok((None, bytes_read));
+                        } else {
+                            return Err(RESPError::LFMissing);
+                        }
+                    } else {
+                        return Err(RESPError::NegativeLength);
+                    }
+                } else {
+                    return Err(RESPError::NegativeLength);
+                }
             }
+
             while (*ptr).ne(&b'\r') {
+                bytes_read += 1;
                 if *ptr < b'0' || *ptr - b'0' > 9 {
-                    let bytes_len = bytes.len();
-                    let end = bytes_len - 2;
                     return Err(RESPError::IntegerParseError(String::from_utf8(
-                        bytes.slice(1..end).to_vec(),
+                        bytes.slice(1..bytes_read).to_vec(),
                     )?));
                 }
                 len = (len * 10) + (*ptr - b'0') as usize;
-                ptr = ptr.wrapping_add(1);
-                bytes_read += 1;
+                ptr = ptr.add(1);
             }
-            ptr = ptr.wrapping_add(1);
+
+            ptr = ptr.add(1);
             if (*ptr).ne(&b'\n') {
                 return Err(RESPError::LFMissing);
             }
@@ -252,11 +264,11 @@ impl Message {
     /// - An array with null elements:
     ///   `*3\r\n$5\r\nhello\r\n$-1\r\n$5\r\nworld\r\n` => `["hello", None, "world"]`
     fn deserialize_array(bytes: &Bytes) -> Result<(Value, usize), RESPError> {
-        let (Some(num_cmds), mut offset) = Self::parse_len(bytes)? else {
+        let (Some(num_elts), mut offset) = Self::parse_len(bytes)? else {
             return Ok((Value::NullArray, 5));
         };
-        let mut result = Vec::with_capacity(num_cmds);
-        for _ in 0..num_cmds {
+        let mut result = Vec::with_capacity(num_elts);
+        for _ in 0..num_elts {
             let (msg, bytes_read) = Message::deserialize(&bytes.slice(offset..))?;
             let value = msg.data;
             result.push(value);
@@ -308,7 +320,7 @@ pub(crate) enum RESPType {
     /// The string can be of any size, but by default, Redis limits it to 512 MB.
     ///
     /// Bulk strings can contain any binary data and may also be referred to as binary or blob.
-    /// Note that bulk strings may be further encoded and decoded, e.g. with a wide multi-byte encoding, by the client.
+    /// Note that bulk strings may be further encoded and decoded, e.g. with a wide multibyte encoding, by the client.
     ///
     /// RESP encodes bulk strings in the following way:
     ///
@@ -336,8 +348,8 @@ pub(crate) enum RESPType {
     /// An integer, by itself, has no special meaning other than in the context of the command that returned it.
     ///
     /// Examples:
-    /// - `:0\r\n` => `0`
-    /// - `:1000\r\n` => `1000`
+    /// - `:0\r\n` <=> `0`
+    /// - `:1000\r\n` <=> `1000`
     Integer = b':',
 
     /// Clients send commands to the Redis server as RESP arrays.
@@ -388,7 +400,7 @@ pub(crate) enum RESPType {
     ///
     /// Errors are similar to simple strings, but their first character is the minus (-) character.
     ///
-    /// Example: `-Error message\r\n` => `Error message`
+    /// Example: `-Error message\r\n` <=> `Error message`
     ///
     /// The client should raise an exception when it receives an Error reply.
     Error = b'-',
@@ -424,7 +436,10 @@ impl TryFrom<u8> for RESPType {
     }
 }
 
-/// Represents a RESP value of a Redis message.
+/// Represents a raw value of a Redis message.
+///
+/// By raw value is meant a [`Bytes`] or an `i64` or a [`Vec`] of such value, which means that the RESP type
+/// and `CRLF` are **excluded**.
 ///
 /// Redis serialization protocol (RESP) is the wire protocol that clients implement.
 ///
@@ -443,14 +458,14 @@ pub(crate) enum Value {
     /// of the first character after the `+` up to the end of the string, excluding the final `CRLF` bytes.
     ///
     /// Example:
-    /// - `"OK"`: `+OK\r\n`.
+    /// - `"OK"`: `+OK\r\n`; We only keep the `b"OK"` portion, i.e., the raw contents.
     SimpleString(Bytes),
 
     /// A bulk string represents a single binary string.
     /// The string can be of any size, but by default, Redis limits it to 512 MB.
     ///
     /// Bulk strings can contain any binary data and may also be referred to as binary or blob.
-    /// Note that bulk strings may be further encoded and decoded, e.g. with a wide multi-byte encoding, by the client.
+    /// Note that bulk strings may be further encoded and decoded, e.g. with a wide multibyte encoding, by the client.
     ///
     /// RESP encodes bulk strings in the following way:
     ///
@@ -463,7 +478,7 @@ pub(crate) enum Value {
     /// rather than the empty string.
     ///
     /// Examples:
-    /// - `"hello"`: `$5\r\nhello\r\n`
+    /// - `"hello"`: `$5\r\nhello\r\n`; We only keep the `b"hello"` portion, i.e., the raw contents.
     /// - `""`: The empty string's encoding is: `$0\r\n\r\n`
     /// - `None`: A Null Bulk String: `$-1\r\n`
     BulkString(Bytes),
@@ -479,8 +494,8 @@ pub(crate) enum Value {
     /// An integer, by itself, has no special meaning other than in the context of the command that returned it.
     ///
     /// Examples:
-    /// - `:0\r\n` => `0`
-    /// - `:1000\r\n` => `1000`
+    /// - `:0\r\n` <=> `0`; We only keep the `0` portion, i.e., the raw contents.
+    /// - `:1000\r\n` <=> `1000`
     Integer(i64),
 
     /// Clients send commands to the Redis server as RESP arrays.
@@ -532,7 +547,8 @@ pub(crate) enum Value {
     ///
     /// Errors are similar to simple strings, but their first character is the minus (-) character.
     ///
-    /// Example: `-Error message\r\n` => `Error message`
+    /// Example:
+    /// - `-Error message\r\n` <=> `Error message`; We only keep the `b"Error message"` portion, i.e., the raw contents.
     ///
     /// The client should raise an exception when it receives an Error reply.
     Error(Bytes),
@@ -562,8 +578,44 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_len_negative_twelve() {
+        let input = Bytes::copy_from_slice(b"$-12"); // Intentionally omitted CRLF at the end.
+        if let Err(RESPError::NegativeLength) = Message::parse_len(&input) {
+        } else {
+            assert_eq!(0, 1);
+        }
+    }
+
+    #[test]
+    fn test_parse_len_negative_two() {
+        let input = Bytes::copy_from_slice(b"$-2"); // Intentionally omitted CRLF at the end.
+        if let Err(RESPError::NegativeLength) = Message::parse_len(&input) {
+        } else {
+            assert_eq!(0, 1);
+        }
+    }
+
+    #[test]
+    fn test_parse_len_negative_garbage1() {
+        let input = Bytes::copy_from_slice(b"$-@"); // Intentionally omitted CRLF at the end.
+        if let Err(RESPError::NegativeLength) = Message::parse_len(&input) {
+        } else {
+            assert_eq!(0, 1);
+        }
+    }
+
+    #[test]
+    fn test_parse_len_negative_garbage2() {
+        let input = Bytes::copy_from_slice(b"$-1@\r\n"); // Intentionally omitted CRLF at the end.
+        if let Err(RESPError::NegativeLength) = Message::parse_len(&input) {
+        } else {
+            assert_eq!(0, 1);
+        }
+    }
+
+    #[test]
     fn test_parse_len_int_parse_err() {
-        let input = Bytes::copy_from_slice(b"$1@3\r\n");
+        let input = Bytes::copy_from_slice(b"$1@"); // Intentionally omitted CRLF at the end.
         if let Err(RESPError::IntegerParseError(_)) = Message::parse_len(&input) {
         } else {
             assert_eq!(0, 1);
@@ -793,14 +845,5 @@ mod tests {
         ];
         let expected = (Value::Array(v), 40);
         assert_eq!(expected, result);
-    }
-
-    #[test]
-    fn test_deserialize_missing_crlf_at_end() {
-        let input = Bytes::copy_from_slice(b"*1\r\n$4\r\nPING");
-        if let Err(RESPError::CRLFNotAtEnd) = Message::deserialize(&input) {
-        } else {
-            assert_eq!(0, 1);
-        }
     }
 }

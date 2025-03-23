@@ -37,6 +37,15 @@ pub enum CmdError {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 
+    #[error(transparent)]
+    FromUtf8Error(#[from] FromUtf8Error),
+
+    #[error(transparent)]
+    RESPError(#[from] RESPError),
+
+    #[error("Input too short: {0}")]
+    InputTooShort(String),
+
     #[error("Command is not Array")]
     CmdNotArray,
 
@@ -52,11 +61,8 @@ pub enum CmdError {
     #[error("Unrecognized command: {0}")]
     UnrecognizedCmd(String),
 
-    #[error(transparent)]
-    FromUtf8Error(#[from] FromUtf8Error),
-
-    #[error(transparent)]
-    RESPError(#[from] RESPError),
+    #[error("CRLF (\\r\\n) characters not at end")]
+    CRLFNotAtEnd,
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -65,6 +71,9 @@ pub enum CmdError {
 /// Errors related to working with [`crate::resp`]
 #[derive(Debug, Error)]
 pub enum RESPError {
+    #[error(transparent)]
+    FromUtf8Error(#[from] FromUtf8Error),
+
     #[error("A request must be of the RESP Array type")]
     NotArray,
 
@@ -89,8 +98,8 @@ pub enum RESPError {
     #[error("CRLF (\\r\\n) characters not at end")]
     CRLFNotAtEnd,
 
-    #[error(transparent)]
-    FromUtf8Error(#[from] FromUtf8Error),
+    #[error("Received negative length")]
+    NegativeLength,
 
     #[error("Couldn't parse {0} to integer")]
     IntegerParseError(String),

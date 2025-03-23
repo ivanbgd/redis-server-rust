@@ -59,21 +59,35 @@ macro_rules! is_enum_variant {
 ///
 /// The received byte stream is necessarily a RESP request, and consequently the RESP Array type.
 ///
+/// The byte stream buffer should not contain excess bytes, i.e., it is expected to end with the appropriate `CRLF`.
+///
 /// Since a single request is always an array, it can contain multiple commands. This is called
 /// [pipelining](https://redis.io/docs/latest/develop/reference/protocol-spec/#multiple-commands-and-pipelining).
 /// Pipelining enables clients to send multiple commands at once and wait for replies later.
 ///
 /// In case of pipelining, the returned bytes contain multiple responses.
 pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> {
+    // Do these checks here once per request, so that [`resp::deserialize`] doesn't have to do it multiple times,
+    // and it would have to do it, as it depends on the byte stream ending in CRLF.
+    let len = bytes.len();
+    if len < 2 {
+        return Err(CmdError::InputTooShort(String::from_utf8(bytes.to_vec())?));
+    }
+    if bytes[len - 2].ne(&b'\r') || bytes[len - 1].ne(&b'\n') {
+        return Err(CmdError::CRLFNotAtEnd);
+    }
+
+    // Get the command-array's length and check against null arrays.
     let (bytes_arr_len, _) = Message::parse_len(bytes)?;
     let num_arr_elts = match bytes_arr_len {
         None => return Err(CmdError::NullArray),
         Some(n) => n,
     };
 
+    // Parse (deserialize) the received byte stream into words (into a Message which holds the words).
     // A client sends a request to the Redis server as an array of strings.
     // The array's contents are the command and its arguments that the server should execute.
-    let (msg, bytes_read) = Message::deserialize(bytes)?;
+    let (msg, _bytes_read) = Message::deserialize(bytes)?;
     let request_arr = match &msg.data {
         Value::Array(array) => array,
         _ => return Err(CmdError::CmdNotArray),
@@ -123,7 +137,7 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
                     result.put(handle_echo(&request_arr[i..i + 2]).await?)
                 }
             }
-            _ => {} // cmd => return Err(CmdError::UnrecognizedCmd(cmd.to_string())), // todo rem
+            _ => {}
         }
         i += 1;
     }
@@ -232,7 +246,7 @@ mod tests {
         let input = Bytes::from(input);
         let result = handle_request(&input).await;
 
-        if let Err(CmdError::RESPError(..)) = result {
+        if let Err(CmdError::CRLFNotAtEnd) = result {
         } else {
             assert_eq!(0, 1)
         };

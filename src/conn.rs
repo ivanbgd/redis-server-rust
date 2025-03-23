@@ -38,6 +38,8 @@ pub async fn handle_connection(mut stream: TcpStream) -> Result<(), ConnectionEr
                 return Err(ConnectionError::from(err));
             }
         };
+        // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which depends on the byte stream
+        // ending in CRLF, beside also being cheaper to copy only the necessary elements.
         let bytes = Bytes::copy_from_slice(&buf[..n]);
         dbg!(&bytes, n);
         let response = handle_request(&bytes).await?;
