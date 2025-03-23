@@ -40,21 +40,13 @@
 //!   All the replies can be read at the end.
 //!   For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 
-use crate::constants::COMMANDS;
+use crate::constants::{ConcurrentStorageType, COMMANDS};
 use crate::errors::CmdError;
+use crate::is_enum_variant;
 use crate::resp::{Message, Value};
+use crate::storage::generic::Crud;
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
-
-/// Compares against an enum variant without taking the value into account
-macro_rules! is_enum_variant {
-    ($val:ident, $var:path) => {
-        match $val {
-            $var(..) => true,
-            _ => false,
-        }
-    };
-}
 
 /// Routes request bytes to the appropriate command handler(s) and returns the response bytes.
 ///
@@ -67,7 +59,10 @@ macro_rules! is_enum_variant {
 /// Pipelining enables clients to send multiple commands at once and wait for replies later.
 ///
 /// In case of pipelining, the returned bytes contain multiple responses.
-pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> {
+pub(crate) async fn handle_request(
+    storage: &ConcurrentStorageType,
+    bytes: &Bytes,
+) -> Result<BytesMut, CmdError> {
     // Do these checks here once per request, so that [`resp::deserialize`] doesn't have to do it multiple times,
     // and it would have to do it, as it depends on the byte stream ending in CRLF.
     let len = bytes.len();
@@ -80,7 +75,7 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
 
     // Get the command-array's length and check against null arrays.
     let (bytes_arr_len, _) = Message::parse_len(bytes)?;
-    let num_arr_elts = match bytes_arr_len {
+    let _num_arr_elts = match bytes_arr_len {
         None => return Err(CmdError::NullArray),
         Some(n) => n,
     };
@@ -106,7 +101,7 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
         return Err(CmdError::NotAllBulk);
     }
 
-    let result = handle_words(request_arr).await?;
+    let result = handle_words(storage, request_arr).await?;
 
     Ok(result)
 }
@@ -114,7 +109,10 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
 /// Handles the request words and routes them to the appropriate functions.
 ///
 /// Routes commands and their arguments to the appropriate command handlers.
-async fn handle_words(request_arr: &[Value]) -> Result<BytesMut, CmdError> {
+async fn handle_words(
+    storage: &ConcurrentStorageType,
+    request_arr: &[Value],
+) -> Result<BytesMut, CmdError> {
     // Clients send commands to a Redis server as an array of bulk strings.
     // The first (and sometimes also the second) bulk string in the array is the command's name.
     // Subsequent elements of the array are the arguments for the command.
@@ -135,6 +133,20 @@ async fn handle_words(request_arr: &[Value]) -> Result<BytesMut, CmdError> {
             panic!("Expected bulk string")
         };
         match first.to_ascii_uppercase().as_slice() {
+            b"ECHO" => {
+                if i < num_flattened - 1 {
+                    result.put(handle_echo(&request_arr[i..i + 2]).await?);
+                } else {
+                    return Err(CmdError::MissingArg);
+                }
+            }
+            b"GET" => {
+                if i < num_flattened - 1 {
+                    result.put(handle_get(&request_arr[i..i + 2], storage).await?);
+                } else {
+                    return Err(CmdError::MissingArg);
+                }
+            }
             b"PING" => {
                 if i < num_flattened - 1 {
                     if let Value::BulkString(word) = &request_arr[i + 1] {
@@ -148,9 +160,9 @@ async fn handle_words(request_arr: &[Value]) -> Result<BytesMut, CmdError> {
                     result.put(handle_ping(&request_arr[i..i + 1]).await?);
                 }
             }
-            b"ECHO" => {
-                if i < num_flattened - 1 {
-                    result.put(handle_echo(&request_arr[i..i + 2]).await?);
+            b"SET" => {
+                if i < num_flattened - 2 {
+                    result.put(handle_set(&request_arr[i..i + 3], storage).await?);
                 } else {
                     return Err(CmdError::MissingArg);
                 }
@@ -176,6 +188,66 @@ fn is_cmd(word: &[u8]) -> bool {
         }
     }
     res
+}
+
+/// Handler for the [ECHO](https://redis.io/docs/latest/commands/echo/) command
+///
+/// Handles a single `ECHO` request.
+///
+/// Returns a copy of the argument as a
+/// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
+///
+/// - Example request from a client: `"*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n"`.
+///   That's `["ECHO", "Hey"]` encoded using the Redis protocol.
+///   - Expected response from the server: `$3\r\nHey\r\n` (a bulk string)
+async fn handle_echo(words: &[Value]) -> Result<Bytes, CmdError> {
+    if words.len() == 2 {
+        let argument = if let Value::BulkString(arg) = &words[1] {
+            arg
+        } else {
+            panic!("Expected ECHO argument and as bulk string");
+        };
+        let argument = String::from_utf8(argument.to_vec())?;
+        let response = format!("${}\r\n{argument}\r\n", argument.len());
+        Ok(Bytes::from(response))
+    } else {
+        panic!("ECHO should consist of exactly two words");
+    }
+}
+
+/// Handler for the [GET](https://redis.io/docs/latest/commands/get/) command
+///
+/// Handles a single `GET` request.
+///
+/// `GET key` => `value`
+///
+/// Get the value of key. If the key does not exist the special value nil is returned.
+/// An error is returned if the value stored at key is not a string, because GET only handles string values.
+///
+/// If the key exists, returns the value of the key as a
+/// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
+///
+/// Examples:
+/// - `"*2\r\n$3\r\nGET\r\n$6\r\norange\r\n"` => `$9\r\npineapple\r\n` - returns value `pineapple` for existing key `orange`
+/// - `"*2\r\n$3\r\nGET\r\n$11\r\nnonexistent\r\n"` => `$-1\r\n` - returns `nil` value for nonexistent key `nonexistent`
+async fn handle_get(words: &[Value], storage: &ConcurrentStorageType) -> Result<Bytes, CmdError> {
+    if words.len() == 2 {
+        let key_arg = if let Value::BulkString(arg) = &words[1] {
+            arg
+        } else {
+            panic!("Expected GET argument and as bulk string");
+        };
+        let key = String::from_utf8(key_arg.to_vec())?;
+        let s = storage.read().await;
+        let response = match (*s).read(key) {
+            Some(value) => format!("${}\r\n{value}\r\n", value.len()),
+            None => "$-1\r\n".to_string(),
+        };
+        dbg!(&response); // todo rem
+        Ok(Bytes::from(response))
+    } else {
+        panic!("GET should consist of exactly two words");
+    }
 }
 
 /// Handler for the [PING](https://redis.io/docs/latest/commands/ping/) command
@@ -209,39 +281,45 @@ async fn handle_ping(words: &[Value]) -> Result<Bytes, CmdError> {
     }
 }
 
-/// Handler for the [ECHO](https://redis.io/docs/latest/commands/echo/) command
-///
-/// Handles a single `ECHO` request.
-///
-/// Returns a copy of the argument as a
-/// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
-///
-/// - Example request from a client: `"*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n"`.
-///   That's `["ECHO", "Hey"]` encoded using the Redis protocol.
-///   - Expected response from the server: `$3\r\nHey\r\n` (a bulk string)
-async fn handle_echo(words: &[Value]) -> Result<Bytes, CmdError> {
-    if words.len() == 2 {
-        let argument = if let Value::BulkString(arg) = &words[1] {
-            arg
-        } else {
-            panic!("Expected ECHO argument and as bulk string");
-        };
-        let argument = String::from_utf8(argument.to_vec())?;
-        let response = format!("${}\r\n{argument}\r\n", argument.len());
-        Ok(Bytes::from(response))
-    } else {
-        panic!("ECHO should consist of exactly two words");
-    }
-}
-
 /// Handler for the [SET](https://redis.io/docs/latest/commands/set/) command
 ///
 /// Handles a single `SET` request.
 ///
-/// Set key to hold the string value. If key already holds a value, it is overwritten, regardless of its type.
+/// `SET key value` => `+OK\r\n`
+///
+/// Sets `key` to hold the string `value`. If key already holds a value, it is overwritten, regardless of its type.
 /// Any previous time to live associated with the key is discarded on successful SET operation.
-pub(crate) async fn handle_set() {
-    todo!()
+///
+/// Returns `OK` as a [simple string](https://redis.io/docs/latest/develop/reference/protocol-spec/#simple-strings),
+/// in case of success.
+///
+/// Example:
+/// - `"*3\r\n\$3\r\nSET\r\n\$6\r\norange\r\n\$9\r\npineapple\r\n"` => `+OK\r\n` - sets key `orange` to value `pineapple`
+pub(crate) async fn handle_set(
+    words: &[Value],
+    storage: &ConcurrentStorageType,
+) -> Result<Bytes, CmdError> {
+    if words.len() >= 2 {
+        let key_arg = if let Value::BulkString(arg) = &words[1] {
+            arg
+        } else {
+            panic!("Expected SET key argument and as bulk string");
+        };
+        let value_arg = if let Value::BulkString(arg) = &words[2] {
+            arg
+        } else {
+            panic!("Expected SET value argument and as bulk string");
+        };
+
+        let key = String::from_utf8(key_arg.to_vec())?;
+        let value = String::from_utf8(value_arg.to_vec())?;
+        let mut s = storage.write().await;
+        let res = (*s).create(key, value);
+        dbg!(res); // todo rem
+        Ok(Bytes::from("+OK\r\n"))
+    } else {
+        panic!("SET should consist of at least three words");
+    }
 }
 
 #[cfg(test)]
@@ -370,6 +448,17 @@ mod tests {
         let result = handle_request(&input).await.unwrap();
 
         let expected = Bytes::from("$13\r\nHello, world!\r\n$15\r\nHey, what's up?\r\n+PONG\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set() {
+        let input = "*3\r\n$3\r\nSET\r\n$6\r\norange\r\n$9\r\npineapple\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("+OK\r\n");
 
         assert_eq!(expected, result);
     }

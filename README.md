@@ -82,3 +82,10 @@ $ echo -ne "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n" | nc localhost 6379
 $3
 Hey
 ```
+
+# Supported Redis Commands
+
+- [ECHO](https://redis.io/docs/latest/commands/echo/)
+- [GET](https://redis.io/docs/latest/commands/get/)
+- [PING](https://redis.io/docs/latest/commands/ping/)
+- [SET](https://redis.io/docs/latest/commands/set/)

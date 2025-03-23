@@ -1,11 +1,12 @@
 //! # Connection Handler
 
 use crate::cmd::handle_request;
-use crate::constants::BUFFER_LEN;
+use crate::constants::{ConcurrentStorageType, BUFFER_LEN};
 use crate::errors::ConnectionError;
+use crate::{log_and_stderr, trace_and_stderr};
 use anyhow::Result;
 use bytes::Bytes;
-use log::{trace, warn};
+use log::warn;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -19,10 +20,12 @@ use tokio::net::TcpStream;
 /// The client can skip reading replies and continue to send the commands one after the other.
 /// All the replies can be read at the end.
 /// For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
-pub async fn handle_connection(mut stream: TcpStream) -> Result<(), ConnectionError> {
+pub async fn handle_connection(
+    storage: ConcurrentStorageType,
+    mut stream: TcpStream,
+) -> Result<(), ConnectionError> {
     let peer_addr = stream.peer_addr()?;
-    trace!("Start handling requests from {}", peer_addr);
-    eprintln!("Start handling requests from {}", peer_addr);
+    log_and_stderr!(trace, "Start handling requests from", peer_addr);
 
     let mut buf = [0u8; BUFFER_LEN];
 
@@ -42,14 +45,13 @@ pub async fn handle_connection(mut stream: TcpStream) -> Result<(), ConnectionEr
         // ending in CRLF, beside also being cheaper to copy only the necessary elements.
         let bytes = Bytes::copy_from_slice(&buf[..n]);
         dbg!(&bytes, n);
-        let response = handle_request(&bytes).await?;
+        let response = handle_request(&storage, &bytes).await?;
         dbg!(&response);
         stream.write_all(&response).await?;
         stream.flush().await?;
     }
 
-    trace!("Stop handling requests from {}", peer_addr);
-    eprintln!("Stop handling requests from {}", peer_addr);
+    trace_and_stderr!("Stop handling requests from", peer_addr);
 
     Ok(())
 }

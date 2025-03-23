@@ -438,8 +438,8 @@ impl TryFrom<u8> for RESPType {
 
 /// Represents a raw value of a Redis message.
 ///
-/// By raw value is meant a [`Bytes`] or an `i64` or a [`Vec`] of such value, which means that the RESP type
-/// and `CRLF` are **excluded**.
+/// By raw value is meant a [`Bytes`] or an `i64` or a [`Vec`] of such value, which means that the RESP type,
+/// length and `CRLF` are **excluded**.
 ///
 /// Redis serialization protocol (RESP) is the wire protocol that clients implement.
 ///
