@@ -40,6 +40,7 @@
 //!   All the replies can be read at the end.
 //!   For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 
+use crate::constants::COMMANDS;
 use crate::errors::CmdError;
 use crate::resp::{Message, Value};
 use anyhow::Result;
@@ -96,10 +97,6 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
         return Err(CmdError::EmptyArray);
     }
 
-    // But, commands can be pipelined, meaning that a single request can contain multiple commands.
-    // num_flattened >= bytes_arr_len
-    let num_flattened = request_arr.len();
-
     // Check in advance whether all array elements are bulk strings, because they all need to be.
     // Return early if at least one command is not a bulk string.
     if !request_arr
@@ -109,10 +106,23 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
         return Err(CmdError::NotAllBulk);
     }
 
+    let result = handle_words(request_arr).await?;
+
+    Ok(result)
+}
+
+/// Handles the request words and routes them to the appropriate functions.
+///
+/// Routes commands and their arguments to the appropriate command handlers.
+async fn handle_words(request_arr: &[Value]) -> Result<BytesMut, CmdError> {
     // Clients send commands to a Redis server as an array of bulk strings.
     // The first (and sometimes also the second) bulk string in the array is the command's name.
     // Subsequent elements of the array are the arguments for the command.
     // For example: b"*2\r\n\$4\r\nECHO\r\n\$9\r\nraspberry\r\n" => b"$9\r\nraspberry\r\n"
+
+    // But, commands can be pipelined, meaning that a single request can contain multiple commands.
+    // num_flattened >= bytes_arr_len
+    let num_flattened = request_arr.len();
 
     let mut result = BytesMut::new();
 
@@ -126,15 +136,23 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
         };
         match first.to_ascii_uppercase().as_slice() {
             b"PING" => {
-                if i == num_flattened - 1 {
-                    result.put(handle_ping(&request_arr[i..i + 1]).await?)
+                if i < num_flattened - 1 {
+                    if let Value::BulkString(word) = &request_arr[i + 1] {
+                        if is_cmd(word) {
+                            result.put(handle_ping(&request_arr[i..i + 1]).await?);
+                        } else {
+                            result.put(handle_ping(&request_arr[i..i + 2]).await?);
+                        }
+                    }
                 } else {
-                    result.put(handle_ping(&request_arr[i..i + 2]).await?)
+                    result.put(handle_ping(&request_arr[i..i + 1]).await?);
                 }
             }
             b"ECHO" => {
                 if i < num_flattened - 1 {
-                    result.put(handle_echo(&request_arr[i..i + 2]).await?)
+                    result.put(handle_echo(&request_arr[i..i + 2]).await?);
+                } else {
+                    return Err(CmdError::MissingArg);
                 }
             }
             _ => {}
@@ -143,6 +161,21 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
     }
 
     Ok(result)
+}
+
+/// Checks whether `word` is a Redis command.
+///
+/// `PING` makes use of this, as it can echo back the next received word, but that word can be a command.
+///
+/// `ECHO` doesn't use it, as it can echo back anything. It's up to the sender to compose input properly.
+fn is_cmd(word: &[u8]) -> bool {
+    let mut res = false;
+    for cmd in COMMANDS {
+        if word.eq_ignore_ascii_case(cmd) {
+            res = true;
+        }
+    }
+    res
 }
 
 /// Handler for the [PING](https://redis.io/docs/latest/commands/ping/) command
@@ -276,8 +309,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_request_ping_ping_ping() {
+        let input = "*3\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("+PONG\r\n+PONG\r\n+PONG\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
     async fn handle_request_ping_with_arg() {
-        let input = "*2\r\n$4\r\nPING\r\n$13\r\nHello, world!\r\n";
+        let input = "*2\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
         let input = Bytes::from(input);
         let result = handle_request(&input).await.unwrap();
 
@@ -299,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_echo_hey_hey() {
-        let input = "*4\r\n$4\r\nECHO\r\n$3\r\nHey\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
+        let input = "*4\r\n$4\r\nEchO\r\n$3\r\nHey\r\n$4\r\nEchO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
         let result = handle_request(&input).await.unwrap();
 
@@ -309,8 +353,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_ping_echo_ping() {
-        let input = "*5\r\n$4\r\nPING\r\n$13\r\nHello, world!\r\n$4\r\nECHO\r\n$15\r\nHey, what's up?\r\n$4\r\nPING\r\n";
+    async fn handle_request_ping_echo_ping_arg() {
+        let input = "*5\r\n$4\r\nPinG\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("+PONG\r\n$15\r\nHey, what's up?\r\n$13\r\nHello, world!\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_arg_echo_ping() {
+        let input = "*5\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n";
         let input = Bytes::from(input);
         let result = handle_request(&input).await.unwrap();
 

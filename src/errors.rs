@@ -46,23 +46,26 @@ pub enum CmdError {
     #[error("Input too short: {0}")]
     InputTooShort(String),
 
+    #[error("CMD: CRLF (\\r\\n) characters not present at end")]
+    CRLFNotAtEnd,
+
+    #[error("Null Array")]
+    NullArray,
+
     #[error("Command is not Array")]
     CmdNotArray,
 
     #[error("Empty Array")]
     EmptyArray,
 
-    #[error("Null Array")]
-    NullArray,
-
     #[error("Not all words are Bulk Strings")]
     NotAllBulk,
 
+    #[error("Command missing argument")]
+    MissingArg,
+
     #[error("Unrecognized command: {0}")]
     UnrecognizedCmd(String),
-
-    #[error("CRLF (\\r\\n) characters not present at end")]
-    CRLFNotAtEnd,
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -95,7 +98,7 @@ pub enum RESPError {
     #[error("Missing the CRLF (\\r\\n) characters at beginning")]
     CRLFMissing,
 
-    #[error("CRLF (\\r\\n) characters not present at end")]
+    #[error("RESP: CRLF (\\r\\n) characters not present at end")]
     CRLFNotAtEnd,
 
     #[error("Received negative length")]
