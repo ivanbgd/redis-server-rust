@@ -61,7 +61,7 @@ pub enum CmdError {
     #[error("Unrecognized command: {0}")]
     UnrecognizedCmd(String),
 
-    #[error("CRLF (\\r\\n) characters not at end")]
+    #[error("CRLF (\\r\\n) characters not present at end")]
     CRLFNotAtEnd,
 
     #[error(transparent)]
@@ -95,7 +95,7 @@ pub enum RESPError {
     #[error("Missing the CRLF (\\r\\n) characters at beginning")]
     CRLFMissing,
 
-    #[error("CRLF (\\r\\n) characters not at end")]
+    #[error("CRLF (\\r\\n) characters not present at end")]
     CRLFNotAtEnd,
 
     #[error("Received negative length")]

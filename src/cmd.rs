@@ -126,14 +126,14 @@ pub(crate) async fn handle_request(bytes: &Bytes) -> Result<BytesMut, CmdError> 
         };
         match first.to_ascii_uppercase().as_slice() {
             b"PING" => {
-                if num_arr_elts == 1 {
+                if i == num_flattened - 1 {
                     result.put(handle_ping(&request_arr[i..i + 1]).await?)
-                } else if num_arr_elts >= 2 {
+                } else {
                     result.put(handle_ping(&request_arr[i..i + 2]).await?)
                 }
             }
             b"ECHO" => {
-                if num_arr_elts >= 2 {
+                if i < num_flattened - 1 {
                     result.put(handle_echo(&request_arr[i..i + 2]).await?)
                 }
             }
@@ -287,12 +287,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_echo() {
+    async fn handle_request_echo_hey() {
         let input = "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
         let result = handle_request(&input).await.unwrap();
 
         let expected = Bytes::from("$3\r\nHey\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_echo_hey_hey() {
+        let input = "*4\r\n$4\r\nECHO\r\n$3\r\nHey\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("$3\r\nHey\r\n$3\r\nHey\r\n");
+
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_ping_echo_ping() {
+        let input = "*5\r\n$4\r\nPING\r\n$13\r\nHello, world!\r\n$4\r\nECHO\r\n$15\r\nHey, what's up?\r\n$4\r\nPING\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(&input).await.unwrap();
+
+        let expected = Bytes::from("$13\r\nHello, world!\r\n$15\r\nHey, what's up?\r\n+PONG\r\n");
 
         assert_eq!(expected, result);
     }
