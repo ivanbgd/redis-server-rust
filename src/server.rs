@@ -1,4 +1,4 @@
-//! The Redis Server Application
+//! The Redis Server
 
 use crate::conn::handle_connection;
 use crate::constants::{ConcurrentStorageType, ExitCode, StorageType};

@@ -1,5 +1,6 @@
 //! # Redis Server Library
 
+pub mod cli;
 pub mod cmd;
 pub mod conn;
 pub mod constants;

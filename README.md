@@ -47,6 +47,12 @@ Note: This section is for stages 2 and beyond.
 
 # Running the Program
 
+- Help is available.
+
+```shell
+$ ./your_program.sh --help
+```
+
 - If you would like to enable the added logging functionality, first set the `RUST_LOG` environment variable.
     - `export RUST_LOG=[trace | debug | info | warn]`
 
@@ -55,10 +61,12 @@ Note: This section is for stages 2 and beyond.
 
 ```shell
 $ ./your_program.sh
-$ export RUST_LOG=trace && ./your_program.sh
+$ ./your_program.sh --port 6380
+$ RUST_LOG=trace ./your_program.sh
 ```
 
-- Our Redis server will listen at the address `127.0.0.1:6379`.
+- Our Redis server will listen at the default address `127.0.0.1:6379`, but port can be changed through a
+  command line argument.
 
 - We can test it in another Terminal tab using, for example, `netcat`, like this:
 

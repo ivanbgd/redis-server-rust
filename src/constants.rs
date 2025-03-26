@@ -6,8 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Default server port
+pub const DEFAULT_PORT: u16 = 6379;
+/// Local host IPv4 address
+pub const LOCAL_SOCKET_ADDR_STR: &str = "127.0.0.1";
 /// Local host IPv4 address and Redis port
-pub const LOCAL_SOCKET_ADDR_STR: &str = "127.0.0.1:6379";
+pub const LOCAL_SOCKET_ADDR_PORT_STR: &str = "127.0.0.1:6379";
 
 /// Local host IPv4 address and arbitrary port chosen by OS
 pub const LOCAL_SOCKET_ADDR_STR_TEST: &str = "127.0.0.1:0";
