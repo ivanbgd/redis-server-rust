@@ -325,7 +325,13 @@ pub(crate) async fn handle_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::StorageType;
+    use crate::storage::Storage;
     use bytes::Bytes;
+    use std::sync::{Arc, OnceLock};
+    use tokio::sync::RwLock;
+
+    static STORAGE: OnceLock<ConcurrentStorageType> = OnceLock::new();
 
     #[tokio::test]
     async fn handle_ping_ping_pong() {
@@ -353,9 +359,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_missing_crlf_at_end() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*1\r\n$4\r\nPING";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await;
+        let result = handle_request(storage, &input).await;
 
         if let Err(CmdError::CRLFNotAtEnd) = result {
         } else {
@@ -365,9 +372,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_pass() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*1\r\n$4\r\nPING\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("+PONG\r\n");
 
@@ -376,9 +384,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_fail_missing_array_len() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "$4\r\nPING\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await;
+        let result = handle_request(storage, &input).await;
 
         if let Err(CmdError::CmdNotArray) = result {
         } else {
@@ -388,9 +397,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_ping_ping() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*3\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("+PONG\r\n+PONG\r\n+PONG\r\n");
 
@@ -399,9 +409,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_with_arg() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*2\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("$13\r\nHello, world!\r\n");
 
@@ -410,9 +421,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_echo_hey() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("$3\r\nHey\r\n");
 
@@ -421,9 +433,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_echo_hey_hey() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*4\r\n$4\r\nEchO\r\n$3\r\nHey\r\n$4\r\nEchO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("$3\r\nHey\r\n$3\r\nHey\r\n");
 
@@ -432,9 +445,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_echo_ping_arg() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*5\r\n$4\r\nPinG\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("+PONG\r\n$15\r\nHey, what's up?\r\n$13\r\nHello, world!\r\n");
 
@@ -443,9 +457,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_arg_echo_ping() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
         let input = "*5\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
+        let result = handle_request(storage, &input).await.unwrap();
 
         let expected = Bytes::from("$13\r\nHello, world!\r\n$15\r\nHey, what's up?\r\n+PONG\r\n");
 
@@ -453,13 +468,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_set() {
+    async fn handle_request_set_get() {
+        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+
         let input = "*3\r\n$3\r\nSET\r\n$6\r\norange\r\n$9\r\npineapple\r\n";
         let input = Bytes::from(input);
-        let result = handle_request(&input).await.unwrap();
-
+        let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
 
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\napple\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$-1\r\n");
+        assert_eq!(expected, result);
+
+        let input = "*2\r\n$3\r\nGET\r\n$6\r\norange\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$9\r\npineapple\r\n");
         assert_eq!(expected, result);
     }
 }
