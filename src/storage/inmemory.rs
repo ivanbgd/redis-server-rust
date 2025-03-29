@@ -39,8 +39,9 @@ where
 impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
     fn create(&mut self, key: StorageKey, value: StorageValue, expiry: ExpirationTime) {
         self.0.create(key.clone(), value.clone(), expiry);
-        if expiry.is_some() {
-            self.1.create(key, value, expiry)
+        match expiry {
+            None => self.1.delete(key),
+            Some(_) => self.1.create(key, value, expiry),
         }
     }
 

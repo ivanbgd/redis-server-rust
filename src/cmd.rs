@@ -761,7 +761,6 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    #[ignore]
     #[tokio::test]
     async fn handle_request_set_07_set_px_set_get_on_time_should_not_expire() {
         let storage = STORAGE.get_or_init(|| {
