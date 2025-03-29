@@ -46,9 +46,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
         // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which depends on the byte stream
         // ending in CRLF, beside also being cheaper to copy only the necessary elements.
         let bytes = Bytes::copy_from_slice(&buf[..n]);
-        dbg!(&bytes, n);
         let response = handle_request(&storage, &bytes).await?;
-        dbg!(&response);
         stream.write_all(&response).await?;
         stream.flush().await?;
     }

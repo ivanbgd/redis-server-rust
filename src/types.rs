@@ -26,16 +26,12 @@ pub type ExpirationTimeType = u128;
 pub type ExpirationTime = Option<ExpirationTimeType>;
 /// The type of a single row (of a single stored entry): storage value
 pub type StorageEntry = StorageValue;
-// ///The type of a single row (of a single stored entry): storage value and expiration time //
-// pub type StorageEntry = (StorageValue, ExpirationTime); //
 /// A concrete in-memory storage implementation - a hash map
 pub type InMemoryStorageHashMap = HashMap<StorageKey, StorageEntry>;
-// pub type StorageType = InMemoryStorageHashMap; //
 /// A concrete implementation of the auxiliary data structure that's used to store keys' expiration times. //
-pub type InMemoryExpiryTimeHashMap = HashMap<StorageKey, ExpirationTime>; //
+pub type InMemoryExpiryTimeHashMap = HashMap<StorageKey, ExpirationTime>;
 /// Generic in-memory storage - could be a [`HashMap`] or a binary tree map or anything else that resides in memory
-pub type InMemoryStorage<KV, KE> = (KV, KE); //
-                                             // pub type InMemoryStorage = (InMemoryStorageHashMap, InMemoryExpTimeHashMap); //
+pub type InMemoryStorage<KV, KE> = (KV, KE);
 /// Generic storage type - could be in-memory or file or DB or anything else
 pub type StorageType<KV, KE> = InMemoryStorage<KV, KE>;
 /// Wrapper around [`StorageType`] which makes it concurrent-safe

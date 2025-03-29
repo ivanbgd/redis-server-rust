@@ -40,7 +40,9 @@ impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
     fn create(&mut self, key: StorageKey, value: StorageValue, expiry: ExpirationTime) {
         self.0.create(key.clone(), value.clone(), expiry);
         match expiry {
+            // The `None` case exists to clear the expiry time in case it exists but wasn't `SET` this time around.
             None => self.1.delete(key),
+            // In the `Some` case, we `SET` the new expiry time, whether it existed or not.
             Some(_) => self.1.create(key, value, expiry),
         }
     }

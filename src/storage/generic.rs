@@ -9,6 +9,16 @@
 //! in-memory data structure, such as a binary tree map, or even not-in-memory.
 //!
 //! The same is true of the auxiliary data structure that's used to store keys' expiration times.
+//!
+//! So, we use two data structures:
+//! 1. One as the main Key-Value store,
+//! 2. The other one as the Key-Expiry time store.
+//!
+//! In this way we may save a lot of storage space (memory) in general, as we only store expiry times for keys
+//! for which they are `SET`, and not for all keys in the form of `None` or similar.
+//!
+//! - From [EXPIRE](https://redis.io/docs/latest/commands/expire/):
+//!     "Normally, Redis keys are created without an associated time to live."
 
 use crate::types::{ExpirationTime, StorageKey, StorageValue};
 
