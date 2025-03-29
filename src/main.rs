@@ -3,10 +3,11 @@
 use anyhow::Result;
 use clap::Parser;
 use codecrafters_redis::cli::Args;
-use codecrafters_redis::constants::{StorageType, LOCAL_SOCKET_ADDR_STR};
+use codecrafters_redis::constants::LOCAL_SOCKET_ADDR_STR;
 use codecrafters_redis::errors::ApplicationError;
 use codecrafters_redis::server::Server;
 use codecrafters_redis::storage::Storage;
+use codecrafters_redis::types::{InMemoryExpiryTimeHashMap, InMemoryStorageHashMap, StorageType};
 use log::info;
 use tokio::net::TcpListener;
 
@@ -19,7 +20,11 @@ async fn main() -> Result<(), ApplicationError> {
     let port = args.port;
 
     let listener = TcpListener::bind(format!("{LOCAL_SOCKET_ADDR_STR}:{port}")).await?;
-    let storage = Storage::<StorageType>::new();
+    let storage = Storage::<
+        StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+        InMemoryStorageHashMap,
+        InMemoryExpiryTimeHashMap,
+    >::new();
 
     let server = Server::new(listener, storage).await?;
     server.start().await?;

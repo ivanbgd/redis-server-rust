@@ -1,10 +1,6 @@
-//! # Constants and Types
+//! # Constants
 //!
-//! Constants and types used throughout the application
-
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+//! Constants used throughout the application
 
 /// Default server port
 pub const DEFAULT_PORT: u16 = 6379;
@@ -27,9 +23,3 @@ pub enum ExitCode {
     Ok = 0,
     Shutdown = -1,
 }
-
-pub type StorageKey = String;
-pub type StorageValue = String;
-type InMemoryStorageHashMap = HashMap<StorageKey, StorageValue>;
-pub type StorageType = InMemoryStorageHashMap;
-pub type ConcurrentStorageType = Arc<RwLock<StorageType>>;

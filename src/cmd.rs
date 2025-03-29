@@ -40,13 +40,15 @@
 //!   All the replies can be read at the end.
 //!   For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 
-use crate::constants::{ConcurrentStorageType, COMMANDS};
+use crate::constants::COMMANDS;
 use crate::errors::CmdError;
 use crate::is_enum_variant;
 use crate::resp::{Message, Value};
 use crate::storage::generic::Crud;
+use crate::types::{ConcurrentStorageType, ExpirationTime, ExpirationTimeType};
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Routes request bytes to the appropriate command handler(s) and returns the response bytes.
 ///
@@ -59,8 +61,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 /// Pipelining enables clients to send multiple commands at once and wait for replies later.
 ///
 /// In case of pipelining, the returned bytes contain multiple responses.
-pub(crate) async fn handle_request(
-    storage: &ConcurrentStorageType,
+pub(crate) async fn handle_request<KV: Crud, KE: Crud>(
+    storage: &ConcurrentStorageType<KV, KE>,
     bytes: &Bytes,
 ) -> Result<BytesMut, CmdError> {
     // Do these checks here once per request, so that [`resp::deserialize`] doesn't have to do it multiple times,
@@ -109,8 +111,8 @@ pub(crate) async fn handle_request(
 /// Handles the request words and routes them to the appropriate functions.
 ///
 /// Routes commands and their arguments to the appropriate command handlers.
-async fn handle_words(
-    storage: &ConcurrentStorageType,
+async fn handle_words<KV: Crud, KE: Crud>(
+    storage: &ConcurrentStorageType<KV, KE>,
     request_arr: &[Value],
 ) -> Result<BytesMut, CmdError> {
     // Clients send commands to a Redis server as an array of bulk strings.
@@ -161,7 +163,9 @@ async fn handle_words(
                 }
             }
             b"SET" => {
-                if i < num_flattened - 2 {
+                if num_flattened >= 4 && i < num_flattened - 4 {
+                    result.put(handle_set(&request_arr[i..i + 5], storage).await?);
+                } else if i < num_flattened - 2 {
                     result.put(handle_set(&request_arr[i..i + 3], storage).await?);
                 } else {
                     return Err(CmdError::MissingArg);
@@ -230,7 +234,10 @@ async fn handle_echo(words: &[Value]) -> Result<Bytes, CmdError> {
 /// Examples:
 /// - `"*2\r\n$3\r\nGET\r\n$6\r\norange\r\n"` => `$9\r\npineapple\r\n` - returns value `pineapple` for existing key `orange`
 /// - `"*2\r\n$3\r\nGET\r\n$11\r\nnonexistent\r\n"` => `$-1\r\n` - returns `nil` value for nonexistent key `nonexistent`
-async fn handle_get(words: &[Value], storage: &ConcurrentStorageType) -> Result<Bytes, CmdError> {
+async fn handle_get<KV: Crud, KE: Crud>(
+    words: &[Value],
+    storage: &ConcurrentStorageType<KV, KE>,
+) -> Result<Bytes, CmdError> {
     if words.len() == 2 {
         let key_arg = if let Value::BulkString(arg) = &words[1] {
             arg
@@ -240,10 +247,28 @@ async fn handle_get(words: &[Value], storage: &ConcurrentStorageType) -> Result<
         let key = String::from_utf8(key_arg.to_vec())?;
         let s = storage.read().await;
         let response = match (*s).read(key) {
-            Some(value) => format!("${}\r\n{value}\r\n", value.len()),
             None => "$-1\r\n".to_string(),
+            Some((value, expiry)) => {
+                match expiry {
+                    None => format!("${}\r\n{value}\r\n", value.len()),
+                    Some(expiry) => {
+                        let time_now_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                            Ok(since) => since,
+                            Err(err) => return Err(CmdError::TimeError(err)),
+                        }
+                        .as_millis();
+                        // https://redis.io/docs/latest/commands/expire/#how-redis-expires-keys
+                        // "A key is passively expired simply when some client tries to access it,
+                        // and the key is found to be timed out."
+                        if time_now_ms > expiry {
+                            "$-1\r\n".to_string()
+                        } else {
+                            format!("${}\r\n{value}\r\n", value.len())
+                        }
+                    }
+                }
+            }
         };
-        dbg!(&response); // todo rem
         Ok(Bytes::from(response))
     } else {
         panic!("GET should consist of exactly two words");
@@ -285,19 +310,27 @@ async fn handle_ping(words: &[Value]) -> Result<Bytes, CmdError> {
 ///
 /// Handles a single `SET` request.
 ///
-/// `SET key value` => `+OK\r\n`
+/// `SET key value [EX s]` => `+OK\r\n`
+/// `SET key value [PX ms]` => `+OK\r\n`
 ///
 /// Sets `key` to hold the string `value`. If key already holds a value, it is overwritten, regardless of its type.
 /// Any previous time to live associated with the key is discarded on successful SET operation.
+///
+/// Supports setting expiry time (time-to-live) for the key with second precision, using the `PX` argument and value,
+/// and with millisecond precision, using the `PX` argument and value.
 ///
 /// Returns `OK` as a [simple string](https://redis.io/docs/latest/develop/reference/protocol-spec/#simple-strings),
 /// in case of success.
 ///
 /// Example:
-/// - `"*3\r\n\$3\r\nSET\r\n\$6\r\norange\r\n\$9\r\npineapple\r\n"` => `+OK\r\n` - sets key `orange` to value `pineapple`
-pub(crate) async fn handle_set(
+/// - `"*3\r\n$3\r\nSET\r\n$6\r\norange\r\n$9\r\npineapple\r\n"` => `+OK\r\n` - sets key `orange` to value `pineapple`
+/// - `"*5\r\n$3\r\nSET\r\n$6\r\nbanana\r\n$5\r\nmango\r\n$2\r\nEX\r\n$3\r\n10\r\n"` => `+OK\r\n` - sets key `banana`
+///   to value `mango` with expiry time of 10 s
+/// - `"*5\r\n$3\r\nSET\r\n$6\r\nbanana\r\n$5\r\nmango\r\n$2\r\nPX\r\n$3\r\n100\r\n"` => `+OK\r\n` - sets key `banana`
+///   to value `mango` with expiry time of 100 ms
+pub(crate) async fn handle_set<KV: Crud, KE: Crud>(
     words: &[Value],
-    storage: &ConcurrentStorageType,
+    storage: &ConcurrentStorageType<KV, KE>,
 ) -> Result<Bytes, CmdError> {
     if words.len() >= 2 {
         let key_arg = if let Value::BulkString(arg) = &words[1] {
@@ -310,12 +343,41 @@ pub(crate) async fn handle_set(
         } else {
             panic!("Expected SET value argument and as bulk string");
         };
-
         let key = String::from_utf8(key_arg.to_vec())?;
         let value = String::from_utf8(value_arg.to_vec())?;
+
+        let expiry: ExpirationTime = if words.len() == 5 {
+            let time_cmd = if let Value::BulkString(arg) = &words[3] {
+                arg
+            } else {
+                panic!("Expected SET time subcommand and as bulk string");
+            };
+            let time_val = if let Value::BulkString(arg) = &words[4] {
+                arg
+            } else {
+                panic!("Expected SET time value and as bulk string");
+            };
+            let time_cmd = String::from_utf8(time_cmd.to_vec())?;
+            let time_val = String::from_utf8(time_val.to_vec())?;
+            // In case of "EX", the TTL is in seconds, but we'll just multiply by 1000 in that case to get milliseconds.
+            let mut ttl_ms = time_val.parse::<ExpirationTimeType>()?;
+            match time_cmd.to_ascii_uppercase().as_str() {
+                "EX" => ttl_ms *= 1000,
+                "PX" => {}
+                tc => return Err(CmdError::WrongArg(tc.to_string())),
+            }
+            let time_now_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(since) => since,
+                Err(err) => return Err(CmdError::TimeError(err)),
+            }
+            .as_millis();
+            Some(time_now_ms + ttl_ms)
+        } else {
+            None
+        };
+
         let mut s = storage.write().await;
-        let res = (*s).create(key, value);
-        dbg!(res); // todo rem
+        (*s).create(key, value, expiry);
         Ok(Bytes::from("+OK\r\n"))
     } else {
         panic!("SET should consist of at least three words");
@@ -325,13 +387,22 @@ pub(crate) async fn handle_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::StorageType;
     use crate::storage::Storage;
+    use crate::types::{InMemoryExpiryTimeHashMap, InMemoryStorageHashMap, StorageType};
     use bytes::Bytes;
     use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
     use tokio::sync::RwLock;
 
-    static STORAGE: OnceLock<ConcurrentStorageType> = OnceLock::new();
+    /// We only get one storage instance that is shared between all tests, which, by the way,
+    /// run concurrently, so pay attention when naming keys!
+    ///
+    /// Keys should be different in all tests that involve `SET` and `GET`, whether they employ
+    /// setting TTL or not, because TTL is implicitly set to infinity if not set explicitly,
+    /// and this may affect other tests that expect shorter TTL, obviously.
+    static STORAGE: OnceLock<
+        ConcurrentStorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+    > = OnceLock::new();
 
     #[tokio::test]
     async fn handle_ping_ping_pong() {
@@ -359,7 +430,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_missing_crlf_at_end() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*1\r\n$4\r\nPING";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await;
@@ -372,7 +449,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_pass() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*1\r\n$4\r\nPING\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -384,7 +467,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_pong_fail_missing_array_len() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "$4\r\nPING\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await;
@@ -397,7 +486,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_ping_ping() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*3\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n$4\r\nPinG\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -409,7 +504,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_with_arg() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*2\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -421,7 +522,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_echo_hey() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -433,7 +540,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_echo_hey_hey() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*4\r\n$4\r\nEchO\r\n$3\r\nHey\r\n$4\r\nEchO\r\n$3\r\nHey\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -445,7 +558,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_echo_ping_arg() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*5\r\n$4\r\nPinG\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -457,7 +576,13 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_ping_arg_echo_ping() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
         let input = "*5\r\n$4\r\nPinG\r\n$13\r\nHello, world!\r\n$4\r\nEchO\r\n$15\r\nHey, what's up?\r\n$4\r\nPinG\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
@@ -468,25 +593,265 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_set_get() {
-        let storage = STORAGE.get_or_init(|| Arc::new(RwLock::new(Storage::<StorageType>::new())));
+    async fn handle_request_set_01_get() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
 
-        let input = "*3\r\n$3\r\nSET\r\n$6\r\norange\r\n$9\r\npineapple\r\n";
+        let input = "*3\r\n$3\r\nSET\r\n$5\r\nKey01\r\n$7\r\nValue01\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("+OK\r\n");
         assert_eq!(expected, result);
 
-        let input = "*2\r\n$3\r\nGET\r\n$5\r\napple\r\n";
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nApple\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("$-1\r\n");
         assert_eq!(expected, result);
 
-        let input = "*2\r\n$3\r\nGET\r\n$6\r\norange\r\n";
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nKey01\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
-        let expected = Bytes::from("$9\r\npineapple\r\n");
+        let expected = Bytes::from("$7\r\nValue01\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_02_px_get_on_time() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey02\r\n$7\r\nvalue02\r\n$2\r\nPX\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey02\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue02\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_03_px_get_expired() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey03\r\n$7\r\nvalue03\r\n$2\r\nPX\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey03\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$-1\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_04_ex_get_on_time() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey04\r\n$7\r\nvalue04\r\n$2\r\nex\r\n$2\r\n10\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey04\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue04\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_05_ex_get_expired() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey05\r\n$7\r\nvalue05\r\n$2\r\nex\r\n$1\r\n1\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey05\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$-1\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_06_set_set_px_get_on_time_then_expired() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*3\r\n$3\r\nSET\r\n$5\r\nkey06\r\n$7\r\nvalue06\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey06\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue06\r\n");
+        assert_eq!(expected, result);
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey06\r\n$7\r\nvalue06\r\n$2\r\npX\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey06\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue06\r\n");
+        assert_eq!(expected, result);
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey06\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$-1\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn handle_request_set_07_set_px_set_get_on_time_should_not_expire() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey07\r\n$7\r\nvalue07\r\n$2\r\nPx\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey07\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue07\r\n");
+        assert_eq!(expected, result);
+
+        let input = "*3\r\n$3\r\nSET\r\n$5\r\nkey07\r\n$7\r\nvalue07\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey07\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue07\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey07\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue07\r\n");
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn handle_request_set_08_set_px_set_px_get_on_time_twice_then_expired() {
+        let storage = STORAGE.get_or_init(|| {
+            Arc::new(RwLock::new(Storage::<
+                StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
+                InMemoryStorageHashMap,
+                InMemoryExpiryTimeHashMap,
+            >::new()))
+        });
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey08\r\n$7\r\nvalue08\r\n$2\r\nPX\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey08\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue08\r\n");
+        assert_eq!(expected, result);
+
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey08\r\n$7\r\nvalue08\r\n$2\r\nPX\r\n$3\r\n100\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("+OK\r\n");
+        assert_eq!(expected, result);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey08\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue08\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey08\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$7\r\nvalue08\r\n");
+        assert_eq!(expected, result);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey06\r\n";
+        let input = Bytes::from(input);
+        let result = handle_request(storage, &input).await.unwrap();
+        let expected = Bytes::from("$-1\r\n");
         assert_eq!(expected, result);
     }
 }

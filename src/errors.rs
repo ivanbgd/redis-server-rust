@@ -2,7 +2,9 @@
 //!
 //! Error types and helper functions used in the library
 
+use std::num::ParseIntError;
 use std::string::FromUtf8Error;
+use std::time::SystemTimeError;
 use thiserror::Error;
 
 /// Application errors
@@ -41,6 +43,12 @@ pub enum CmdError {
     FromUtf8Error(#[from] FromUtf8Error),
 
     #[error(transparent)]
+    ParseIntError(#[from] ParseIntError),
+
+    #[error("Clock may have gone backwards: {0}")]
+    TimeError(#[from] SystemTimeError),
+
+    #[error(transparent)]
     RESPError(#[from] RESPError),
 
     #[error("Input too short: {0}")]
@@ -66,6 +74,9 @@ pub enum CmdError {
 
     #[error("Unrecognized command: {0}")]
     UnrecognizedCmd(String),
+
+    #[error("Wrong argument: {0}")]
+    WrongArg(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

@@ -10,3 +10,4 @@ pub mod macros;
 pub mod resp;
 pub mod server;
 pub mod storage;
+pub mod types;

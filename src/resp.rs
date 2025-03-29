@@ -69,6 +69,8 @@ impl Message {
     /// The byte stream buffer should not contain excess bytes, i.e., it is expected to end with the appropriate `CRLF`.
     ///
     /// This is an associated function that can be used to create a new instance of a [`Message`].
+    ///
+    /// Returns a tuple of ([`Message`], the length of the complete raw value in bytes).
     pub(crate) fn deserialize(bytes: &Bytes) -> Result<(Message, usize), RESPError> {
         let resp_type = bytes[0].try_into()?;
         let (value, length) = match resp_type {
@@ -222,7 +224,7 @@ impl Message {
     /// - `:+1000\r\n` => `(1000, 8)`
     /// - `:-1000\r\n` => `(-1000, 8)`
     fn deserialize_integer(bytes: &Bytes) -> Result<(Value, usize), RESPError> {
-        // We can use Self::parse_len(). It skips the first byte, considering it a RESP type.
+        // We use Self::parse_len(). It skips the first byte, considering it a RESP type.
         if bytes[1].eq(&b'+') {
             let (value, bytes_read) = Self::parse_len(&bytes.slice(1..))?;
             let value = value.expect("Expected some length; got None (-1).");

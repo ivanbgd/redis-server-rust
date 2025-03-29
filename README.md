@@ -74,10 +74,6 @@ $ RUST_LOG=trace ./your_program.sh
 $ echo -ne "*1\r\n$4\r\nPING\r\n" | nc localhost 6379
 +PONG
 
-$ echo -ne "*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n" | nc localhost 6379
-+PONG
-+PONG
-
 $ echo -ne "*2\r\n$4\r\nPING\r\n$4\r\nPING\r\n" | nc localhost 6379
 +PONG
 +PONG
@@ -89,6 +85,12 @@ Hello, world!
 $ echo -ne "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n" | nc localhost 6379
 $3
 Hey
+
+$ echo -ne "*3\r\n\$3\r\nSET\r\n\$6\r\norange\r\n\$9\r\npineapple\r\n" | nc localhost 6379
++OK
+$ echo -ne "*2\r\n\$3\r\nGET\r\n\$6\r\norange\r\n" | nc localhost 6379
+$9
+pineapple
 ```
 
 # Supported Redis Commands
@@ -96,4 +98,4 @@ Hey
 - [ECHO](https://redis.io/docs/latest/commands/echo/)
 - [GET](https://redis.io/docs/latest/commands/get/)
 - [PING](https://redis.io/docs/latest/commands/ping/)
-- [SET](https://redis.io/docs/latest/commands/set/)
+- [SET [EX | PX]](https://redis.io/docs/latest/commands/set/)

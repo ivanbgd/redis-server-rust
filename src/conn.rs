@@ -1,8 +1,10 @@
 //! # Connection Handler
 
 use crate::cmd::handle_request;
-use crate::constants::{ConcurrentStorageType, BUFFER_LEN};
+use crate::constants::BUFFER_LEN;
 use crate::errors::ConnectionError;
+use crate::storage::generic::Crud;
+use crate::types::ConcurrentStorageType;
 use crate::{log_and_stderr, trace_and_stderr};
 use anyhow::Result;
 use bytes::Bytes;
@@ -20,8 +22,8 @@ use tokio::net::TcpStream;
 /// The client can skip reading replies and continue to send the commands one after the other.
 /// All the replies can be read at the end.
 /// For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
-pub async fn handle_connection(
-    storage: ConcurrentStorageType,
+pub async fn handle_connection<KV: Crud, KE: Crud>(
+    storage: ConcurrentStorageType<KV, KE>,
     mut stream: TcpStream,
 ) -> Result<(), ConnectionError> {
     let peer_addr = stream.peer_addr()?;

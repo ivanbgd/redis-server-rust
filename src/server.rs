@@ -1,9 +1,11 @@
 //! The Redis Server
 
 use crate::conn::handle_connection;
-use crate::constants::{ConcurrentStorageType, ExitCode, StorageType};
+use crate::constants::ExitCode;
 use crate::errors::ApplicationError;
 use crate::log_and_stderr;
+use crate::storage::generic::Crud;
+use crate::types::{ConcurrentStorageType, StorageType};
 use anyhow::Result;
 use log::{error, info, warn};
 use std::process::exit;
@@ -13,16 +15,16 @@ use tokio::sync::RwLock;
 
 /// Redis server
 #[derive(Debug)]
-pub struct Server {
+pub struct Server<KV, KE> {
     listener: TcpListener,
-    storage: ConcurrentStorageType,
+    storage: ConcurrentStorageType<KV, KE>,
 }
 
-impl Server {
+impl<KV: Crud + Send + Sync + 'static, KE: Crud + Send + Sync + 'static> Server<KV, KE> {
     /// Create an instance of the Redis server
     pub async fn new(
         listener: TcpListener,
-        storage: StorageType,
+        storage: StorageType<KV, KE>,
     ) -> Result<Self, ApplicationError> {
         let addr = listener.local_addr()?;
         log_and_stderr!(info, "Listening on", addr);
