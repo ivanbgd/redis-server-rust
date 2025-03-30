@@ -37,8 +37,8 @@ where
 }
 
 impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
-    fn create(&mut self, key: StorageKey, value: StorageValue, expiry: ExpirationTime) {
-        self.0.create(key.clone(), value.clone(), expiry);
+    fn create(&mut self, key: &StorageKey, value: StorageValue, expiry: ExpirationTime) {
+        self.0.create(key, value.clone(), expiry);
         match expiry {
             // The `None` case exists to clear the expiry time in case it exists but wasn't `SET` this time around.
             None => self.1.delete(key),
@@ -47,11 +47,11 @@ impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
         }
     }
 
-    fn read(&self, key: StorageKey) -> Option<(StorageValue, ExpirationTime)> {
-        match self.0.read(key.clone()) {
+    fn read(&self, key: &StorageKey) -> Option<(StorageValue, ExpirationTime)> {
+        match self.0.read(key) {
             None => None,
             Some((value, _dummy_expiry)) => {
-                let expiry = match self.1.read(key.clone()) {
+                let expiry = match self.1.read(key) {
                     Some((_dummy_value, expiry)) => expiry,
                     None => None,
                 };
@@ -60,36 +60,36 @@ impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
         }
     }
 
-    fn delete(&mut self, key: StorageKey) {
-        self.0.delete(key.clone());
+    fn delete(&mut self, key: &StorageKey) {
+        self.0.delete(key);
         self.1.delete(key);
     }
 }
 
 impl Crud for InMemoryStorageHashMap {
-    fn create(&mut self, key: StorageKey, value: StorageValue, _expiry: ExpirationTime) {
-        self.insert(key, value);
+    fn create(&mut self, key: &StorageKey, value: StorageValue, _expiry: ExpirationTime) {
+        self.insert(key.clone(), value);
     }
 
-    fn read(&self, key: StorageKey) -> Option<(StorageValue, ExpirationTime)> {
-        self.get(&key).map(|value| (value.clone(), None))
+    fn read(&self, key: &StorageKey) -> Option<(StorageValue, ExpirationTime)> {
+        self.get(key).map(|value| (value.clone(), None))
     }
 
-    fn delete(&mut self, key: StorageKey) {
-        self.remove(&key);
+    fn delete(&mut self, key: &StorageKey) {
+        self.remove(key);
     }
 }
 
 impl Crud for InMemoryExpiryTimeHashMap {
-    fn create(&mut self, key: StorageKey, _value: StorageValue, expiry: ExpirationTime) {
-        self.insert(key, expiry);
+    fn create(&mut self, key: &StorageKey, _value: StorageValue, expiry: ExpirationTime) {
+        self.insert(key.clone(), expiry);
     }
 
-    fn read(&self, key: StorageKey) -> Option<(StorageValue, ExpirationTime)> {
-        self.get(&key).map(|value| ("".to_string(), *value))
+    fn read(&self, key: &StorageKey) -> Option<(StorageValue, ExpirationTime)> {
+        self.get(key).map(|value| ("".to_string(), *value))
     }
 
-    fn delete(&mut self, key: StorageKey) {
-        self.remove(&key);
+    fn delete(&mut self, key: &StorageKey) {
+        self.remove(key);
     }
 }

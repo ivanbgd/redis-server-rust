@@ -253,7 +253,7 @@ async fn handle_get<KV: Crud, KE: Crud>(
         let mut should_delete = false;
         let response = {
             let s = storage.read().await;
-            match s.read(key.clone()) {
+            match s.read(&key) {
                 None => "$-1\r\n".to_string(),
                 Some((value, expiry)) => match expiry {
                     None => format!("${}\r\n{value}\r\n", value.len()),
@@ -275,7 +275,7 @@ async fn handle_get<KV: Crud, KE: Crud>(
         };
         if should_delete {
             let mut s = storage.write().await;
-            s.delete(key.clone());
+            s.delete(&key);
         }
         Ok(Bytes::from(response))
     } else {
@@ -385,7 +385,7 @@ pub(crate) async fn handle_set<KV: Crud, KE: Crud>(
         };
 
         let mut s = storage.write().await;
-        (*s).create(key, value, expiry);
+        (*s).create(&key, value, expiry);
         Ok(Bytes::from("+OK\r\n"))
     } else {
         panic!("SET should consist of at least three words");

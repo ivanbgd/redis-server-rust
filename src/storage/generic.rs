@@ -52,18 +52,18 @@ where
 /// Trait CRUD: Create, Read, Update, Delete
 pub trait Crud {
     /// Create an element
-    fn create(&mut self, key: StorageKey, value: StorageValue, expiry: ExpirationTime);
+    fn create(&mut self, key: &StorageKey, value: StorageValue, expiry: ExpirationTime);
 
     /// Read an element
-    fn read(&self, key: StorageKey) -> Option<(StorageValue, ExpirationTime)>;
+    fn read(&self, key: &StorageKey) -> Option<(StorageValue, ExpirationTime)>;
 
     /// Update an element
     ///
     /// Creates the entry if it didn't exist.
-    fn update(&mut self, key: StorageKey, value: StorageValue, expiry: ExpirationTime) {
+    fn update(&mut self, key: &StorageKey, value: StorageValue, expiry: ExpirationTime) {
         self.create(key, value, expiry);
     }
 
     /// Delete an element
-    fn delete(&mut self, key: StorageKey);
+    fn delete(&mut self, key: &StorageKey);
 }
