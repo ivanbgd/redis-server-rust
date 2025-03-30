@@ -231,6 +231,11 @@ async fn handle_echo(words: &[Value]) -> Result<Bytes, CmdError> {
 /// If the key exists, returns the value of the key as a
 /// [bulk string](https://redis.io/docs/latest/develop/reference/protocol-spec/#bulk-strings).
 ///
+/// If a key is passively expired, deletes it.
+///
+/// From the [EXPIRE](https://redis.io/docs/latest/commands/expire/#how-redis-expires-keys) docs:
+/// "A key is passively expired simply when some client tries to access it, and the key is found to be timed out."
+///
 /// Examples:
 /// - `"*2\r\n$3\r\nGET\r\n$6\r\norange\r\n"` => `$9\r\npineapple\r\n` - returns value `pineapple` for existing key `orange`
 /// - `"*2\r\n$3\r\nGET\r\n$11\r\nnonexistent\r\n"` => `$-1\r\n` - returns `nil` value for nonexistent key `nonexistent`
@@ -245,11 +250,12 @@ async fn handle_get<KV: Crud, KE: Crud>(
             panic!("Expected GET argument and as bulk string");
         };
         let key = String::from_utf8(key_arg.to_vec())?;
-        let s = storage.read().await;
-        let response = match (*s).read(key) {
-            None => "$-1\r\n".to_string(),
-            Some((value, expiry)) => {
-                match expiry {
+        let mut should_delete = false;
+        let response = {
+            let s = storage.read().await;
+            match s.read(key.clone()) {
+                None => "$-1\r\n".to_string(),
+                Some((value, expiry)) => match expiry {
                     None => format!("${}\r\n{value}\r\n", value.len()),
                     Some(expiry) => {
                         let time_now_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -257,18 +263,20 @@ async fn handle_get<KV: Crud, KE: Crud>(
                             Err(err) => return Err(CmdError::TimeError(err)),
                         }
                         .as_millis();
-                        // https://redis.io/docs/latest/commands/expire/#how-redis-expires-keys
-                        // "A key is passively expired simply when some client tries to access it,
-                        // and the key is found to be timed out."
                         if time_now_ms > expiry {
+                            should_delete = true;
                             "$-1\r\n".to_string()
                         } else {
                             format!("${}\r\n{value}\r\n", value.len())
                         }
                     }
-                }
+                },
             }
         };
+        if should_delete {
+            let mut s = storage.write().await;
+            s.delete(key.clone());
+        }
         Ok(Bytes::from(response))
     } else {
         panic!("GET should consist of exactly two words");
