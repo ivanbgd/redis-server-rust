@@ -3,8 +3,8 @@
 use crate::storage::generic::{Crud, SubStorage};
 use crate::storage::Storage;
 use crate::types::{
-    ExpirationTime, InMemoryExpiryTimeHashMap, InMemoryStorage, InMemoryStorageHashMap, StorageKey,
-    StorageValue,
+    ExpirationTime, InMemoryExpiryTimeBTreeMap, InMemoryExpiryTimeHashMap, InMemoryStorage,
+    InMemoryStorageHashMap, StorageKey, StorageValue,
 };
 
 impl<S, KV, KE> Storage<S, KV, KE> for InMemoryStorage<KV, KE>
@@ -15,24 +15,6 @@ where
 {
     fn new() -> Self {
         (KV::new(), KE::new())
-    }
-}
-
-impl<S> SubStorage<S> for InMemoryStorageHashMap
-where
-    S: Crud + Sync + Send + 'static,
-{
-    fn new() -> Self {
-        Self::new()
-    }
-}
-
-impl<S> SubStorage<S> for InMemoryExpiryTimeHashMap
-where
-    S: Crud + Sync + Send + 'static,
-{
-    fn new() -> Self {
-        Self::new()
     }
 }
 
@@ -66,6 +48,15 @@ impl<KV: Crud, KE: Crud> Crud for InMemoryStorage<KV, KE> {
     }
 }
 
+impl<S> SubStorage<S> for InMemoryStorageHashMap
+where
+    S: Crud + Sync + Send + 'static,
+{
+    fn new() -> Self {
+        Self::new()
+    }
+}
+
 impl Crud for InMemoryStorageHashMap {
     fn create(&mut self, key: &StorageKey, value: StorageValue, _expiry: ExpirationTime) {
         self.insert(key.clone(), value);
@@ -80,7 +71,39 @@ impl Crud for InMemoryStorageHashMap {
     }
 }
 
+impl<S> SubStorage<S> for InMemoryExpiryTimeHashMap
+where
+    S: Crud + Sync + Send + 'static,
+{
+    fn new() -> Self {
+        Self::new()
+    }
+}
+
 impl Crud for InMemoryExpiryTimeHashMap {
+    fn create(&mut self, key: &StorageKey, _value: StorageValue, expiry: ExpirationTime) {
+        self.insert(key.clone(), expiry);
+    }
+
+    fn read(&self, key: &StorageKey) -> Option<(StorageValue, ExpirationTime)> {
+        self.get(key).map(|value| ("".to_string(), *value))
+    }
+
+    fn delete(&mut self, key: &StorageKey) {
+        self.remove(key);
+    }
+}
+
+impl<S> SubStorage<S> for InMemoryExpiryTimeBTreeMap
+where
+    S: Crud + Sync + Send + 'static,
+{
+    fn new() -> Self {
+        Self::new()
+    }
+}
+
+impl Crud for InMemoryExpiryTimeBTreeMap {
     fn create(&mut self, key: &StorageKey, _value: StorageValue, expiry: ExpirationTime) {
         self.insert(key.clone(), expiry);
     }

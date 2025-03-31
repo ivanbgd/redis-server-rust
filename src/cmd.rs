@@ -49,6 +49,7 @@ use crate::types::{ConcurrentStorageType, ExpirationTime, ExpirationTimeType};
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::time::{SystemTime, UNIX_EPOCH};
+// use tokio::io::AsyncReadExt;
 
 /// Routes request bytes to the appropriate command handler(s) and returns the response bytes.
 ///
@@ -252,7 +253,7 @@ async fn handle_get<KV: Crud, KE: Crud>(
         let key = String::from_utf8(key_arg.to_vec())?;
         let mut should_delete = false;
         let response = {
-            let s = storage.read().await;
+            let s = storage.read().expect("RwLockReadGuard");
             match s.read(&key) {
                 None => "$-1\r\n".to_string(),
                 Some((value, expiry)) => match expiry {
@@ -274,7 +275,7 @@ async fn handle_get<KV: Crud, KE: Crud>(
             }
         };
         if should_delete {
-            let mut s = storage.write().await;
+            let mut s = storage.write().expect("RwLockWriteGuard");
             s.delete(&key);
         }
         Ok(Bytes::from(response))
@@ -384,7 +385,7 @@ pub(crate) async fn handle_set<KV: Crud, KE: Crud>(
             None
         };
 
-        let mut s = storage.write().await;
+        let mut s = storage.write().expect("RwLockWriteGuard");
         (*s).create(&key, value, expiry);
         Ok(Bytes::from("+OK\r\n"))
     } else {
@@ -398,9 +399,10 @@ mod tests {
     use crate::storage::Storage;
     use crate::types::{InMemoryExpiryTimeHashMap, InMemoryStorageHashMap, StorageType};
     use bytes::Bytes;
+    use std::sync::RwLock;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
-    use tokio::sync::RwLock;
+    // use tokio::sync::RwLock;
 
     /// We only get one storage instance that is shared between all tests, which, by the way,
     /// run concurrently, so pay attention when naming keys!

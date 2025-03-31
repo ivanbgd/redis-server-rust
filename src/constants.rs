@@ -2,6 +2,8 @@
 //!
 //! Constants used throughout the application
 
+use crate::types::ExpirationTimeType;
+
 /// Default server port
 pub const DEFAULT_PORT: u16 = 6379;
 /// Local host IPv4 address
@@ -12,10 +14,14 @@ pub const LOCAL_SOCKET_ADDR_PORT_STR: &str = "127.0.0.1:6379";
 /// Local host IPv4 address and arbitrary port chosen by OS
 pub const LOCAL_SOCKET_ADDR_STR_TEST: &str = "127.0.0.1:0";
 
+/// Supported Redis commands
+pub const COMMANDS: [&[u8]; 4] = [b"ECHO", b"GET", b"PING", b"SET"];
+
+/// Time period in milliseconds for checking of expired keys
+pub const HZ_MS: ExpirationTimeType = 3000;
+
 /// Length of buffer for handling connections, 512 bytes
 pub const BUFFER_LEN: usize = 512;
-
-pub const COMMANDS: [&[u8]; 4] = [b"ECHO", b"GET", b"PING", b"SET"];
 
 /// Application exit codes
 #[derive(Debug)]

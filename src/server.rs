@@ -3,15 +3,20 @@
 use crate::conn::handle_connection;
 use crate::constants::ExitCode;
 use crate::errors::ApplicationError;
+use crate::expiry::eviction_loop;
 use crate::log_and_stderr;
 use crate::storage::generic::Crud;
-use crate::types::{ConcurrentStorageType, StorageType};
+use crate::types::{ConcurrentStorageType, ExpirationTime, StorageKey, StorageType};
 use anyhow::Result;
 use log::{error, info, warn};
+use std::fmt::Debug;
 use std::process::exit;
 use std::sync::Arc;
+// use tokio::sync::RwLock;
+use std::sync::RwLock;
+use std::thread;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+// use tokio::task;
 
 /// Redis server
 #[derive(Debug)]
@@ -20,7 +25,17 @@ pub struct Server<KV, KE> {
     storage: ConcurrentStorageType<KV, KE>,
 }
 
-impl<KV: Crud + Send + Sync + 'static, KE: Crud + Send + Sync + 'static> Server<KV, KE> {
+impl<
+        KV: 'static + Crud + Send + Sync + Debug,
+        KE: 'static
+            + Clone
+            + Crud
+            + Send
+            + Sync
+            + Debug
+            + IntoIterator<Item = (StorageKey, ExpirationTime)>,
+    > Server<KV, KE>
+{
     /// Create an instance of the Redis server
     pub async fn new(
         listener: TcpListener,
@@ -37,6 +52,13 @@ impl<KV: Crud + Send + Sync + 'static, KE: Crud + Send + Sync + 'static> Server<
 
     /// Start the server
     pub async fn start(&self) -> Result<(), ApplicationError> {
+        let storage = &self.storage;
+        let storage = Arc::clone(storage);
+        let handle = thread::Builder::new()
+            .name("evictor-thread".to_string())
+            .spawn(move || eviction_loop(storage))?;
+        // task::spawn_blocking()
+
         self.main_loop().await
     }
 
