@@ -3,20 +3,15 @@
 use crate::conn::handle_connection;
 use crate::constants::ExitCode;
 use crate::errors::ApplicationError;
-use crate::expiry::eviction_loop;
 use crate::log_and_stderr;
 use crate::storage::generic::Crud;
-use crate::types::{ConcurrentStorageType, ExpirationTime, StorageKey, StorageType};
+use crate::types::{ConcurrentStorageType, ExpirationTime, StorageKey};
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::fmt::Debug;
 use std::process::exit;
 use std::sync::Arc;
-// use tokio::sync::RwLock;
-use std::sync::RwLock;
-use std::thread;
 use tokio::net::TcpListener;
-// use tokio::task;
 
 /// Redis server
 #[derive(Debug)]
@@ -39,33 +34,26 @@ impl<
     /// Create an instance of the Redis server
     pub async fn new(
         listener: TcpListener,
-        storage: StorageType<KV, KE>,
+        storage: ConcurrentStorageType<KV, KE>,
     ) -> Result<Self, ApplicationError> {
         let addr = listener.local_addr()?;
         log_and_stderr!(info, "Listening on", addr);
 
-        Ok(Self {
-            listener,
-            storage: Arc::new(RwLock::new(storage)),
-        })
+        Ok(Self { listener, storage })
     }
 
     /// Start the server
+    ///
+    /// Starts the async core thread.
     pub async fn start(&self) -> Result<(), ApplicationError> {
-        let storage = &self.storage;
-        let storage = Arc::clone(storage);
-        let handle = thread::Builder::new()
-            .name("evictor-thread".to_string())
-            .spawn(move || eviction_loop(storage))?;
-        // task::spawn_blocking()
-
-        self.main_loop().await
+        self.core_loop().await
     }
 
     /// Resolve Redis queries
     ///
     /// Supports multiple concurrent clients in addition to multiple requests from the same connection.
-    async fn main_loop(&self) -> Result<(), ApplicationError> {
+    async fn core_loop(&self) -> Result<(), ApplicationError> {
+        debug!("Starting the core loop...");
         info!("Waiting for requests...");
         let storage = &self.storage;
 

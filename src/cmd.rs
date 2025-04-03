@@ -48,8 +48,8 @@ use crate::storage::generic::Crud;
 use crate::types::{ConcurrentStorageType, ExpirationTime, ExpirationTimeType};
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
+use log::debug;
 use std::time::{SystemTime, UNIX_EPOCH};
-// use tokio::io::AsyncReadExt;
 
 /// Routes request bytes to the appropriate command handler(s) and returns the response bytes.
 ///
@@ -253,7 +253,10 @@ async fn handle_get<KV: Crud, KE: Crud>(
         let key = String::from_utf8(key_arg.to_vec())?;
         let mut should_delete = false;
         let response = {
-            let s = storage.read().expect("RwLockReadGuard");
+            let s = storage.read().unwrap_or_else(|poisoned| {
+                debug!("RwLock is poisoned (RwLockReadGuard). Recovering...");
+                poisoned.into_inner()
+            });
             match s.read(&key) {
                 None => "$-1\r\n".to_string(),
                 Some((value, expiry)) => match expiry {
@@ -275,7 +278,10 @@ async fn handle_get<KV: Crud, KE: Crud>(
             }
         };
         if should_delete {
-            let mut s = storage.write().expect("RwLockWriteGuard");
+            let mut s = storage.write().unwrap_or_else(|poisoned| {
+                debug!("RwLock is poisoned (RwLockWriteGuard). Recovering...");
+                poisoned.into_inner()
+            });
             s.delete(&key);
         }
         Ok(Bytes::from(response))
@@ -385,7 +391,10 @@ pub(crate) async fn handle_set<KV: Crud, KE: Crud>(
             None
         };
 
-        let mut s = storage.write().expect("RwLockWriteGuard");
+        let mut s = storage.write().unwrap_or_else(|poisoned| {
+            debug!("RwLock is poisoned (RwLockWriteGuard). Recovering...");
+            poisoned.into_inner()
+        });
         (*s).create(&key, value, expiry);
         Ok(Bytes::from("+OK\r\n"))
     } else {
@@ -402,7 +411,6 @@ mod tests {
     use std::sync::RwLock;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
-    // use tokio::sync::RwLock;
 
     /// We only get one storage instance that is shared between all tests, which, by the way,
     /// run concurrently, so pay attention when naming keys!

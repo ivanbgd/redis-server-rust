@@ -5,7 +5,7 @@ use crate::constants::BUFFER_LEN;
 use crate::errors::ConnectionError;
 use crate::storage::generic::Crud;
 use crate::types::ConcurrentStorageType;
-use crate::{log_and_stderr, trace_and_stderr};
+use crate::{debug_and_stderr, log_and_stderr};
 use anyhow::Result;
 use bytes::Bytes;
 use log::warn;
@@ -27,7 +27,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
     mut stream: TcpStream,
 ) -> Result<(), ConnectionError> {
     let peer_addr = stream.peer_addr()?;
-    log_and_stderr!(trace, "Start handling requests from", peer_addr);
+    log_and_stderr!(debug, "Start handling requests from", peer_addr);
 
     let mut buf = [0u8; BUFFER_LEN];
 
@@ -51,7 +51,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
         stream.flush().await?;
     }
 
-    trace_and_stderr!("Stop handling requests from", peer_addr);
+    debug_and_stderr!("Stop handling requests from", peer_addr);
 
     Ok(())
 }

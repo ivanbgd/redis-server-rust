@@ -7,6 +7,7 @@ use crate::errors::CmdError;
 use crate::storage::generic::Crud;
 use crate::types::{ConcurrentStorageType, ExpirationTime, StorageKey};
 use anyhow::Result;
+use log::{debug, trace};
 use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,30 +23,25 @@ pub fn eviction_loop<
 >(
     storage: ConcurrentStorageType<KV, KE>,
 ) -> Result<(), CmdError> {
-    eprintln!("Eviction!"); // todo rem
-    let mut i = 0; // todo rem
+    debug!("Starting the eviction loop...");
     loop {
         let time_now_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(since) => since,
             Err(err) => return Err(CmdError::TimeError(err)),
         }
         .as_millis();
-        eprintln!("{i}"); // todo rem
-                          // tokio::time::sleep(Duration::from_millis(HZ as u64)).await;
-                          // tokio::time::timeout(Duration::from_millis(HZ as u64)).await;
+        trace!("time_now_ms = {time_now_ms}");
         let mut s = storage.write().expect("RwLockWriteGuard");
-        // println!("{:?}", s.1);
         let (kv, ke) = s.deref_mut();
-        eprintln!("KV: {kv:?}"); // todo keep
-        eprintln!("KE: {ke:?}"); // todo keep
         for (key, expiry) in ke.clone().into_iter() {
             if time_now_ms > expiry.expect("Expected Some(expiry)") {
                 kv.delete(&key);
                 ke.delete(&key);
             }
         }
+        trace!("KV: {kv:?}");
+        trace!("KE: {ke:?}");
+        drop(s);
         std::thread::sleep(Duration::from_millis(HZ_MS as u64));
-        i += 1; // todo rem
-                // std::thread::yield_now();
     }
 }
