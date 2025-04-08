@@ -1,31 +1,16 @@
-# DON'T EDIT THIS!
-#
-# Codecrafters relies on this file being intact to run tests successfully. Any changes
-# here will not reflect when CodeCrafters tests your code, and might even cause build
-# failures.
-#
-# DON'T EDIT THIS!
 [package]
-name = "codecrafters-redis"
+name = "redis"
 version = "0.1.0"
-authors = ["Codecrafters <hello@codecrafters.io>"]
+authors = ["Ivan Lazarević"]
 edition = "2021"
 
-# DON'T EDIT THIS!
-#
-# Codecrafters relies on this file being intact to run tests successfully. Any changes
-# here will not reflect when CodeCrafters tests your code, and might even cause build
-# failures.
-#
-# DON'T EDIT THIS!
 [dependencies]
-anyhow = "1"                                   # error handling
-bytes = "1"                                     # helps manage buffers
-thiserror = "2"                                # error handling
-tokio = { version = "1", features = ["full"] } # async networking
-
-# My additions
+anyhow = "1"
+bytes = "1"
 clap = { version = "4.5.32", features = ["derive"] }
 env_logger = "0.11.7"
 log = "0.4.26"
 memchr = "2.7.4"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+#tokio-util = { version = "0.7.14", features = ["codec"] }
