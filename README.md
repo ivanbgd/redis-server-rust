@@ -1,4 +1,4 @@
-# A Redis Clone Implementation in Rust
+# A Redis Server Implementation in Rust
 
 # Notes
 
