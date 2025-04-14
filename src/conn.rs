@@ -30,7 +30,8 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
     log_and_stderr!(debug, "Start handling requests from", peer_addr);
 
     loop {
-        let mut buf = BytesMut::zeroed(BUFFER_LEN);
+        let mut buf = BytesMut::with_capacity(BUFFER_LEN);
+        buf.resize(BUFFER_LEN, 0);
         let n = match socket.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
@@ -44,7 +45,8 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
         };
         // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which **depends**
         // on the byte stream **ending in CRLF**.
-        let response = handle_request(&storage, &buf.freeze().slice(..n)).await?;
+        buf.truncate(n);
+        let response = handle_request(&storage, &buf.freeze()).await?;
         socket.write_all(&response).await?;
         socket.flush().await?;
     }
