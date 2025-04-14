@@ -2,4 +2,4 @@
 
 set -e # Exit on failure
 
-exec /tmp/build-redis-rust/release/redis-server "$@"
+exec /tmp/build-redis-server/release/redis-server "$@"

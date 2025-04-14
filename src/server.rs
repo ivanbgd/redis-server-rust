@@ -59,13 +59,13 @@ impl<
 
         loop {
             let storage = Arc::clone(storage);
-            let (stream, _) = self.listener.accept().await?;
+            let (socket, _) = self.listener.accept().await?;
 
             // A new task is spawned for each inbound socket. The socket is moved to the new task and processed there.
             tokio::spawn(async move {
                 // Process each socket (stream) concurrently.
                 // Each connection can process multiple successive requests (commands) from the same client.
-                handle_connection(storage, stream)
+                handle_connection(storage, socket)
                     .await
                     .map_err(|e| {
                         warn!("error: {}", e);

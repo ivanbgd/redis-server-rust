@@ -7,7 +7,7 @@ use crate::storage::generic::Crud;
 use crate::types::ConcurrentStorageType;
 use crate::{debug_and_stderr, log_and_stderr};
 use anyhow::Result;
-use bytes::Bytes;
+use bytes::BytesMut;
 use log::warn;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -24,15 +24,14 @@ use tokio::net::TcpStream;
 /// For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 pub async fn handle_connection<KV: Crud, KE: Crud>(
     storage: ConcurrentStorageType<KV, KE>,
-    mut stream: TcpStream,
+    mut socket: TcpStream,
 ) -> Result<(), ConnectionError> {
-    let peer_addr = stream.peer_addr()?;
+    let peer_addr = socket.peer_addr()?;
     log_and_stderr!(debug, "Start handling requests from", peer_addr);
 
-    let mut buf = [0u8; BUFFER_LEN];
-
     loop {
-        let n = match stream.read(&mut buf).await {
+        let mut buf = BytesMut::zeroed(BUFFER_LEN);
+        let n = match socket.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
                 assert!(0 < n && n <= buf.len());
@@ -43,12 +42,11 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
                 return Err(ConnectionError::from(err));
             }
         };
-        // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which depends on the byte stream
-        // ending in CRLF, beside also being cheaper to copy only the necessary elements.
-        let bytes = Bytes::copy_from_slice(&buf[..n]);
-        let response = handle_request(&storage, &bytes).await?;
-        stream.write_all(&response).await?;
-        stream.flush().await?;
+        // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which **depends**
+        // on the byte stream **ending in CRLF**.
+        let response = handle_request(&storage, &buf.freeze().slice(..n)).await?;
+        socket.write_all(&response).await?;
+        socket.flush().await?;
     }
 
     debug_and_stderr!("Stop handling requests from", peer_addr);

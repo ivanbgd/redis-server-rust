@@ -92,7 +92,7 @@ impl Message {
         ))
     }
 
-    /// Gets the length of aggregate types (for example, bulk strings or arrays).
+    /// Gets the length of aggregate types (for example, arrays or bulk strings).
     ///
     /// Returns a tuple of the parsed length and the number of bytes read to extract the length.
     ///
@@ -102,6 +102,7 @@ impl Message {
     ///
     /// In case `-1` is received as length, returns None as length, and 5 as bytes read:
     /// one byte for type plus four bytes for: `b"-1\r\n"`:
+    /// - `b"$-1\r\n"` => `(None, 5)`
     /// - `b"*-1\r\n"` => `(None, 5)`
     ///
     /// Length of `-1` carries a special meaning in RESP, to represent null bulk strings or arrays.
@@ -118,9 +119,9 @@ impl Message {
     /// # Errors
     /// - Returns an error in case `LF` is missing after `CR`, but `CR` is assumed to be present, as it's required
     ///   by the algorithm which is designed to be fast, so it doesn't check for it beforehand.
-    /// - Length can't be negative.
-    /// - Characters composing length must be decimal digits `0` through `9`.
-    pub(crate) fn parse_len(bytes: &Bytes) -> Result<(Option<usize>, usize), RESPError> {
+    /// - Length can't be negative, so returns an error if that's the case.
+    /// - Characters composing length must be decimal digits `0` through `9`; returns an error if that isn't the case.
+    pub(crate) fn parse_len(bytes: &[u8]) -> Result<(Option<usize>, usize), RESPError> {
         let mut ptr: *const u8 = bytes.as_ptr();
         let mut bytes_read: usize = 0;
         let mut len: usize = 0;
