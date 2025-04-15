@@ -2,13 +2,13 @@
 
 # Notes
 
-- Logging has been added.
 - Some commands were fully implemented, per official Redis specification.
 - Redis command names are case-insensitive, and we made them that way, while retaining case of their arguments.
 - Handles multiple successive requests from the same connection.
 - Supports multiple concurrent clients.
     - In addition to handling multiple commands from the same client,
       Redis servers are also designed to handle multiple clients at once.
+- Logging has been added.
 
 # Running the Program
 

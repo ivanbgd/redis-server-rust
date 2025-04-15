@@ -31,8 +31,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
 
     loop {
         let mut buf = BytesMut::with_capacity(BUFFER_LEN);
-        buf.resize(BUFFER_LEN, 0);
-        let n = match socket.read(&mut buf).await {
+        let n = match socket.read_buf(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
                 assert!(0 < n && n <= buf.len());
