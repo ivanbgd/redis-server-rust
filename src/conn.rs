@@ -1,7 +1,6 @@
 //! # Connection Handler
 
 use crate::cmd::handle_request;
-use crate::constants::BUFFER_LEN;
 use crate::errors::ConnectionError;
 use crate::storage::generic::Crud;
 use crate::types::ConcurrentStorageType;
@@ -31,7 +30,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
 
     loop {
         let mut buf = BytesMut::new();
-        let n = match socket.read_buf(&mut buf).await {
+        let _n = match socket.read_buf(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
                 assert!(0 < n && n <= buf.len());
@@ -44,7 +43,6 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
         };
         // [`cmd::handle_request`] will forward the buffer to [`resp::deserialize`] which **depends**
         // on the byte stream **ending in CRLF**.
-        buf.truncate(n);
         let response = handle_request(&storage, &buf.freeze()).await?;
         socket.write_all(&response).await?;
         socket.flush().await?;
