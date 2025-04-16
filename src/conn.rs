@@ -30,7 +30,7 @@ pub async fn handle_connection<KV: Crud, KE: Crud>(
     log_and_stderr!(debug, "Start handling requests from", peer_addr);
 
     loop {
-        let mut buf = BytesMut::with_capacity(BUFFER_LEN);
+        let mut buf = BytesMut::new();
         let n = match socket.read_buf(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
