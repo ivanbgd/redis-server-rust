@@ -674,7 +674,7 @@ mod tests {
             >::new()))
         });
 
-        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey03\r\n$7\r\nvalue03\r\n$2\r\nPX\r\n$3\r\n100\r\n";
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey03\r\n$7\r\nvalue03\r\n$2\r\npx\r\n$3\r\n100\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("+OK\r\n");
@@ -699,7 +699,7 @@ mod tests {
             >::new()))
         });
 
-        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey04\r\n$7\r\nvalue04\r\n$2\r\nex\r\n$2\r\n10\r\n";
+        let input = "*5\r\n$3\r\nSET\r\n$5\r\nkey04\r\n$7\r\nvalue04\r\n$2\r\nEX\r\n$2\r\n10\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("+OK\r\n");
@@ -865,7 +865,7 @@ mod tests {
         assert_eq!(expected, result);
 
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey06\r\n";
+        let input = "*2\r\n$3\r\nGET\r\n$5\r\nkey08\r\n";
         let input = Bytes::from(input);
         let result = handle_request(storage, &input).await.unwrap();
         let expected = Bytes::from("$-1\r\n");
