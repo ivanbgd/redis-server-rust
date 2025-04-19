@@ -24,7 +24,6 @@ pub enum ServerError {
     IoError(#[from] std::io::Error),
 
     #[error("couldn't obtain permit on time: {0}")]
-    // ElapsedError(#[from] tokio::time::error::Elapsed), // TODO remove
     ElapsedError(String),
 
     #[error("couldn't obtain permit: {0}")]

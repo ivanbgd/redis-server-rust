@@ -9,7 +9,7 @@ use crate::log_and_stderr;
 use crate::storage::generic::Crud;
 use crate::types::{ConcurrentStorageType, ExpirationTime, StorageKey};
 use anyhow::Result;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::fmt::Debug;
 use std::process::exit;
 use std::sync::Arc;
@@ -85,10 +85,10 @@ impl<
                         handle_connection(storage, &mut socket)
                             .await
                             .map_err(|e| {
-                                log_and_stderr!(warn, "WARN:", e);
+                                warn!("{e}");
                             })
                             .expect("Failed to handle request");
-                        // Drop socket while the permit is still live.
+                        // Drop socket while the permit is still alive.
                         drop(socket);
                         // Drop the permit so more tasks can be created.
                         drop(permit);
@@ -97,44 +97,19 @@ impl<
                     });
                 }
                 Err(e) => {
-                    log_and_stderr!(warn, "WARN:", e);
+                    warn!("{e}");
                 }
             };
-
-            /////////////////////
-            // ALTERNATIVE WAY:
-
-            // let (mut socket, permit) = match self.acquire_socket_permit().await {
-            //     Ok((socket, permit)) => (socket, permit),
-            //     Err(e) => {
-            //         log_and_stderr!(warn, "WARN:", e);
-            //         continue;
-            //     }
-            // };
-            //
-            // let storage = Arc::clone(storage);
-            //
-            // // A new task is spawned for each inbound socket. The socket is moved to the new task and processed there.
-            // tokio::spawn(async move {
-            //     // Process each socket (stream) concurrently.
-            //     // Each connection can process multiple successive requests (commands) from the same client.
-            //     handle_connection(storage, &mut socket)
-            //         .await
-            //         .map_err(|e| {
-            //             log_and_stderr!(warn, "WARN:", e);
-            //         })
-            //         .expect("Failed to handle request");
-            //     // Drop socket while the permit is still alive.
-            //     drop(socket);
-            //     // Drop the permit so more tasks can be created.
-            //     drop(permit);
-            //
-            //     Self::shutdown().await;
-            // });
         }
     }
 
     /// Tries to acquire a permit for a connection socket
+    ///
+    /// It only tries to do that in case there is an incoming connection.
+    ///
+    /// If there is an incoming connection, tries to acquire a permit from semaphore within a predefined time interval.
+    ///
+    /// So, it doesn't try to acquire permit if there is no incoming connection.
     ///
     /// # Returns
     ///
@@ -147,43 +122,27 @@ impl<
     async fn acquire_socket_permit(
         &self,
     ) -> Result<(TcpStream, OwnedSemaphorePermit), ServerError> {
-        let permit = timeout(
-            Duration::from_millis(CONNECTION_PERMIT_TIMEOUT_MS),
-            self.max_conn.clone().acquire_owned(),
-        )
-        .await
-        .map_err(|e| {
-            ServerError::ElapsedError(
-                format!("{e} ({CONNECTION_PERMIT_TIMEOUT_MS} ms)").to_string(),
-            )
-        })??;
-        let (socket, _) = self.listener.accept().await?;
-        Ok((socket, permit))
+        match self.listener.accept().await {
+            Ok((socket, _)) => {
+                match timeout(
+                    Duration::from_millis(CONNECTION_PERMIT_TIMEOUT_MS),
+                    self.max_conn.clone().acquire_owned(),
+                )
+                .await
+                {
+                    Ok(Ok(permit)) => Ok((socket, permit)),
+                    Ok(Err(e)) => Err(ServerError::AcquireError(e)),
+                    Err(e) => {
+                        drop(socket);
+                        Err(ServerError::ElapsedError(
+                            format!("{e} ({CONNECTION_PERMIT_TIMEOUT_MS} ms)").to_string(),
+                        ))
+                    }
+                }
+            }
+            Err(e) => Err(ServerError::IoError(e)),
+        }
     }
-    // async fn acquire_socket_permit(
-    //     &self,
-    // ) -> Result<(TcpStream, OwnedSemaphorePermit), ServerError> {
-    //     match self.listener.accept().await {
-    //         Ok((socket, _)) => {
-    //             match timeout(
-    //                 Duration::from_millis(CONNECTION_PERMIT_TIMEOUT_MS),
-    //                 self.max_conn.clone().acquire_owned(),
-    //             )
-    //             .await
-    //             {
-    //                 Ok(Ok(permit)) => Ok((socket, permit)),
-    //                 Ok(Err(e)) => Err(ServerError::AcquireError(e)),
-    //                 Err(e) => {
-    //                     drop(socket);
-    //                     Err(ServerError::ElapsedError(
-    //                         format!("{e} ({CONNECTION_PERMIT_TIMEOUT_MS} ms)").to_string(),
-    //                     ))
-    //                 }
-    //             }
-    //         }
-    //         Err(e) => Err(ServerError::IoError(e)),
-    //     }
-    // }
 
     /// Await the shutdown signal
     async fn shutdown() {
