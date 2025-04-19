@@ -23,7 +23,7 @@ use tokio::net::TcpStream;
 /// For more information, see [Pipelining](https://redis.io/docs/latest/develop/use/pipelining/).
 pub async fn handle_connection<KV: Crud, KE: Crud>(
     storage: ConcurrentStorageType<KV, KE>,
-    mut socket: TcpStream,
+    socket: &mut TcpStream,
 ) -> Result<(), ConnectionError> {
     let peer_addr = socket.peer_addr()?;
     log_and_stderr!(debug, "Start handling requests from", peer_addr);

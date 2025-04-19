@@ -3,17 +3,18 @@
 # Fail immediately if any command has a non-zero exit status, or if a variable hasn't been defined.
 set -eu
 
-# Run test server at this port.
+# Port number to use for test server.
 PORT=6380
 
 # Start the test server.
 echo "Starting the test server..."
 RUST_LOG=info ./run.sh --port $PORT 2>/dev/null &
-server_pid=$! # Get the pid of the background process.
-sleep 1 # Give test server some time to start.
+server_pid=$! # Get the PID of the server background process.
+sleep 1s # Give test server some time to start.
 printf "Test server running...\n\n";
 
-test_nr=0 # Test counter
+# Test number counter
+test_nr=0
 
 # Runs a single test. It expects two arguments:
 # 1. Redis command
@@ -22,8 +23,7 @@ run_test()
 {
   test_nr=$((test_nr+1))
   printf 'Running test #%d...' "$test_nr"
-  # response=$(echo -ne "$1" | nc localhost $PORT; ret=$?; echo .; exit "$ret")
-  response=$(echo -ne "$1" | nc localhost $PORT; echo .)
+  response=$(echo -ne "$1" | nc localhost "$PORT"; echo .)
   response=${response%.}
   if [ "$response" = "$2" ]; then
     printf ' PASSED'

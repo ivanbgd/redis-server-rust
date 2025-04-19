@@ -4,14 +4,12 @@ use anyhow::Result;
 use clap::Parser;
 use log::info;
 use redis_server::cli::Args;
-use redis_server::constants::LOCAL_SOCKET_ADDR_STR;
 use redis_server::errors::ApplicationError;
 use redis_server::expiry::eviction_loop;
 use redis_server::server::Server;
 use redis_server::storage::Storage;
 use redis_server::types::{InMemoryExpiryTimeHashMap, InMemoryStorageHashMap, StorageType};
 use std::sync::{Arc, RwLock};
-use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), ApplicationError> {
@@ -19,9 +17,7 @@ async fn main() -> Result<(), ApplicationError> {
     info!("Starting the server...");
 
     let args = Args::parse();
-    let port = args.port;
 
-    let listener = TcpListener::bind(format!("{LOCAL_SOCKET_ADDR_STR}:{port}")).await?;
     let storage = Storage::<
         StorageType<InMemoryStorageHashMap, InMemoryExpiryTimeHashMap>,
         InMemoryStorageHashMap,
@@ -36,7 +32,7 @@ async fn main() -> Result<(), ApplicationError> {
         .spawn(move || eviction_loop(evictor_store))?;
 
     let core_store = Arc::clone(&storage);
-    let server = Server::new(listener, core_store).await?;
+    let server = Server::new(args, core_store).await?;
     server.start().await?;
 
     Ok(())

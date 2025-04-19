@@ -152,7 +152,7 @@ impl Message {
                 bytes_read += 1;
                 if *ptr < b'0' || *ptr - b'0' > 9 {
                     return Err(RESPError::IntegerParseError(String::from_utf8(
-                        bytes.slice(1..bytes_read).to_vec(),
+                        bytes[1..bytes_read].to_vec(),
                     )?));
                 }
                 len = (len * 10) + (*ptr - b'0') as usize;
@@ -564,7 +564,7 @@ mod tests {
     use bytes::Bytes;
 
     #[test]
-    fn test_parse_len_thousand() {
+    fn test_parse_len_123456() {
         let input = Bytes::copy_from_slice(b"$123456\r\n");
         let (value, bytes_read) = Message::parse_len(&input).unwrap();
         let result = (value.unwrap(), bytes_read);

@@ -1,5 +1,14 @@
 # A Redis Server Implementation in Rust
 
+[![license](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](LICENSE)
+
+# Supported Redis Commands
+
+- [ECHO](https://redis.io/docs/latest/commands/echo/)
+- [GET](https://redis.io/docs/latest/commands/get/)
+- [PING](https://redis.io/docs/latest/commands/ping/)
+- [SET [EX | PX]](https://redis.io/docs/latest/commands/set/)
+
 # Notes
 
 - Some commands were fully implemented, per official Redis specification.
@@ -51,16 +60,14 @@ $ echo -ne "*2\r\n$4\r\nECHO\r\n$3\r\nHey\r\n" | nc localhost 6379
 $3
 Hey
 
-$ echo -ne "*3\r\n\$3\r\nSET\r\n\$6\r\norange\r\n\$9\r\npineapple\r\n" | nc localhost 6379
+$ echo -ne "*3\r\n\$3\r\nSET\r\n\$6\r\nOrange\r\n\$9\r\nPineapple\r\n" | nc localhost 6379
 +OK
-$ echo -ne "*2\r\n\$3\r\nGET\r\n\$6\r\norange\r\n" | nc localhost 6379
+$ echo -ne "*2\r\n\$3\r\nGET\r\n\$6\r\nOrange\r\n" | nc localhost 6379
 $9
-pineapple
+Pineapple
 ```
 
-# Supported Redis Commands
+# Testing
 
-- [ECHO](https://redis.io/docs/latest/commands/echo/)
-- [GET](https://redis.io/docs/latest/commands/get/)
-- [PING](https://redis.io/docs/latest/commands/ping/)
-- [SET [EX | PX]](https://redis.io/docs/latest/commands/set/)
+- Unit-test with `cargo test`.
+- Functional-test with `./test.sh`.

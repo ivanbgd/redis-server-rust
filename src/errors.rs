@@ -2,9 +2,6 @@
 //!
 //! Error types and helper functions used in the library
 
-use std::num::ParseIntError;
-use std::string::FromUtf8Error;
-use std::time::SystemTimeError;
 use thiserror::Error;
 
 /// Application errors
@@ -14,7 +11,24 @@ pub enum ApplicationError {
     IoError(#[from] std::io::Error),
 
     #[error(transparent)]
-    ConnectionError(#[from] ConnectionError),
+    ServerError(#[from] ServerError),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+/// Errors related to working with [`crate::server`]
+#[derive(Debug, Error)]
+pub enum ServerError {
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("couldn't obtain permit on time: {0}")]
+    // ElapsedError(#[from] tokio::time::error::Elapsed), // TODO remove
+    ElapsedError(String),
+
+    #[error("couldn't obtain permit: {0}")]
+    AcquireError(#[from] tokio::sync::AcquireError),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -40,13 +54,13 @@ pub enum CmdError {
     IoError(#[from] std::io::Error),
 
     #[error(transparent)]
-    FromUtf8Error(#[from] FromUtf8Error),
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
 
     #[error(transparent)]
-    ParseIntError(#[from] ParseIntError),
+    ParseIntError(#[from] std::num::ParseIntError),
 
     #[error("Clock may have gone backwards: {0}")]
-    TimeError(#[from] SystemTimeError),
+    TimeError(#[from] std::time::SystemTimeError),
 
     #[error(transparent)]
     RESPError(#[from] RESPError),
@@ -86,7 +100,7 @@ pub enum CmdError {
 #[derive(Debug, Error)]
 pub enum RESPError {
     #[error(transparent)]
-    FromUtf8Error(#[from] FromUtf8Error),
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
 
     #[error("A request must be of the RESP Array type")]
     NotArray,

@@ -190,6 +190,7 @@ fn is_cmd(word: &[u8]) -> bool {
     for cmd in COMMANDS {
         if word.eq_ignore_ascii_case(cmd) {
             res = true;
+            break;
         }
     }
     res
