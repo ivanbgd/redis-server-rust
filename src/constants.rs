@@ -28,6 +28,9 @@ pub const HZ_MS: ExpirationTimeType = 100;
 /// Length of buffer for handling connections, 512 bytes
 pub const BUFFER_LEN: usize = 512;
 
+/// Time to wait during a graceful shutdown in milliseconds
+pub const SHUTDOWN_TIME_MS: u64 = 500;
+
 /// Application exit codes
 #[derive(Debug)]
 pub enum ExitCode {

@@ -2,8 +2,8 @@
 
 use crate::cli::Args;
 use crate::conn::handle_connection;
-use crate::constants::LOCAL_SOCKET_ADDR_STR;
 use crate::constants::{ExitCode, CONNECTION_PERMIT_TIMEOUT_MS};
+use crate::constants::{LOCAL_SOCKET_ADDR_STR, SHUTDOWN_TIME_MS};
 use crate::errors::ServerError;
 use crate::log_and_stderr;
 use crate::storage::generic::Crud;
@@ -73,6 +73,8 @@ impl<
         info!("Waiting for requests...");
         let storage = &self.storage;
 
+        Self::shutdown(SHUTDOWN_TIME_MS).await;
+
         loop {
             match self.acquire_socket_permit().await {
                 Ok((mut socket, permit)) => {
@@ -92,8 +94,6 @@ impl<
                         drop(socket);
                         // Drop the permit so more tasks can be created.
                         drop(permit);
-
-                        Self::shutdown().await;
                     });
                 }
                 Err(e) => {
@@ -145,11 +145,14 @@ impl<
     }
 
     /// Await the shutdown signal
-    async fn shutdown() {
+    ///
+    /// Gives the server time to finish an ongoing operation for a graceful shutdown.
+    async fn shutdown(time_to_wait: u64) {
         tokio::spawn(async move {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
-                    info!("CTRL+C received. Shutting down...");
+                    info!("CTRL+C received. Shutting down gracefully...");
+                    tokio::time::sleep(Duration::from_millis(time_to_wait)).await;
                     exit(ExitCode::Ok as i32);
                 }
                 Err(err) => {
